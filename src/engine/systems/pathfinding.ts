@@ -1,7 +1,7 @@
 // ============================================================
 // Shadow Protocol - A* Pathfinding
 // ============================================================
-import { Position, TileData } from '../types';
+import { Position, TileData } from '@/engine/types';
 
 interface PathNode {
   pos: Position;

@@ -1,8 +1,8 @@
 // ============================================================
 // Shadow Protocol - Momentum System
 // ============================================================
-import { MomentumState, MomentumEvent, MOMENTUM_VALUES } from '../types';
-import { eventBus } from '../events';
+import { MomentumState, MomentumEvent, MOMENTUM_VALUES } from '@/engine/types';
+import { eventBus } from '@/engine/events';
 
 export function createMomentumState(): MomentumState {
   return { current: 0, threshold: 10, comboAvailable: false };

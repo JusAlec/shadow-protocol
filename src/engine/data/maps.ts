@@ -1,4 +1,4 @@
-import { TileData, TileType, CoverDirection, Position, DestructionEvent } from '../types';
+import { TileData, TileType, CoverDirection, Position, DestructionEvent } from '@/engine/types';
 
 interface TileTemplate {
   type: TileType;

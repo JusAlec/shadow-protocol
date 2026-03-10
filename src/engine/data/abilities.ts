@@ -1,4 +1,4 @@
-import { AbilityDefinition } from '../types';
+import { AbilityDefinition } from '@/engine/types';
 
 export const ABILITIES: Record<string, AbilityDefinition> = {
   headshot: {

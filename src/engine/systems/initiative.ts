@@ -1,7 +1,7 @@
 // ============================================================
 // Shadow Protocol - Initiative Timeline System
 // ============================================================
-import { Unit, TimelineEntry, ACTION_COSTS } from '../types';
+import { Unit, TimelineEntry, ACTION_COSTS } from '@/engine/types';
 
 export function initializeTimeline(units: Unit[]): TimelineEntry[] {
   const entries: TimelineEntry[] = units

@@ -1,9 +1,9 @@
 // ============================================================
 // Shadow Protocol - Environment & Destruction System
 // ============================================================
-import { TileData, Position, Unit, DestructionEvent } from '../types';
-import { eventBus } from '../events';
-import { applyDamage } from './combat';
+import { TileData, Position, Unit, DestructionEvent } from '@/engine/types';
+import { eventBus } from '@/engine/events';
+import { applyDamage } from '@/engine/systems/combat';
 
 export function damageTile(
   grid: TileData[][],

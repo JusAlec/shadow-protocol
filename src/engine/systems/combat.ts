@@ -4,9 +4,9 @@
 import {
   Unit, TileData, AttackResult, HitCalculation,
   Position, CoverType, Weapon, StatusEffect
-} from '../types';
-import { WEAPONS } from '../data/weapons';
-import { eventBus } from '../events';
+} from '@/engine/types';
+import { WEAPONS } from '@/engine/data/weapons';
+import { eventBus } from '@/engine/events';
 
 // --- Distance ---
 export function getDistance(a: Position, b: Position): number {

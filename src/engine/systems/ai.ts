@@ -1,13 +1,15 @@
 // ============================================================
 // Shadow Protocol - Enemy AI System
 // ============================================================
-import { Unit, Position, TileData, AIState, AwarenessState } from '../types';
-import { eventBus } from '../events';
-import { getDistance, getCoverBetween, isFlanking, resolveAttack, applyDamage } from './combat';
-import { hasLineOfSight } from './visibility';
-import { findPath, getReachableTiles } from './pathfinding';
-import { WEAPONS } from '../data/weapons';
-import { ABILITIES } from '../data/abilities';
+import { Unit, Position, TileData, AIState, AwarenessState } from '@/engine/types';
+import { eventBus } from '@/engine/events';
+import { getDistance, getCoverBetween, isFlanking, resolveAttack, applyDamage } from '@/engine/systems/combat';
+import { hasLineOfSight } from '@/engine/systems/visibility';
+import { findPath, getReachableTiles } from '@/engine/systems/pathfinding';
+import { WEAPONS } from '@/engine/data/weapons';
+import { ABILITIES } from '@/engine/data/abilities';
+
+export type { AIState };
 
 export interface AIAction {
   type: 'move' | 'attack' | 'ability' | 'overwatch' | 'idle';

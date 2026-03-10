@@ -1,4 +1,4 @@
-import { Weapon } from '../types';
+import { Weapon } from '@/engine/types';
 
 export const WEAPONS: Record<string, Weapon> = {
   sniper_rifle: {

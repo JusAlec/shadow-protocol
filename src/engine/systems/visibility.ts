@@ -1,8 +1,8 @@
 // ============================================================
 // Shadow Protocol - Fog of War / Visibility System
 // ============================================================
-import { Position, TileData, Unit, VisibilityMap, VisibilityState } from '../types';
-import { getEuclideanDistance } from './combat';
+import { Position, TileData, Unit, VisibilityMap, VisibilityState } from '@/engine/types';
+import { getEuclideanDistance } from '@/engine/systems/combat';
 
 function posKey(x: number, y: number): string {
   return `${x},${y}`;

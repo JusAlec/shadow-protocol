@@ -5,25 +5,25 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   GameState, GamePhase, Unit, Position, TileData, CombatLogEntry,
   MomentumEvent, TimelineEntry
-} from '../types';
-import { eventBus } from '../events';
-import { generateDemoMap, getDemoSpawns } from '../data/maps';
-import { createOperative, createEnemy } from '../data/operatives';
-import { WEAPONS } from '../data/weapons';
-import { ABILITIES } from '../data/abilities';
+} from '@/engine/types';
+import { eventBus } from '@/engine/events';
+import { generateDemoMap, getDemoSpawns } from '@/engine/data/maps';
+import { createOperative, createEnemy } from '@/engine/data/operatives';
+import { WEAPONS } from '@/engine/data/weapons';
+import { ABILITIES } from '@/engine/data/abilities';
 import {
   resolveAttack, applyDamage, applyStatusEffect, tickStatusEffects,
   calculateHitChance, getDistance
-} from '../systems/combat';
-import { calculateSquadVisibility, hasLineOfSight } from '../systems/visibility';
-import { getReachableTiles, findPath, getTilesInRange } from '../systems/pathfinding';
-import { initializeTimeline, advanceUnit, removeFromTimeline, getNextUnit, sortTimeline } from '../systems/initiative';
-import { createMomentumState, applyMomentum, consumeMomentum } from '../systems/momentum';
-import { checkHazardDamage, damageTile } from '../systems/environment';
+} from '@/engine/systems/combat';
+import { calculateSquadVisibility, hasLineOfSight } from '@/engine/systems/visibility';
+import { getReachableTiles, findPath, getTilesInRange } from '@/engine/systems/pathfinding';
+import { initializeTimeline, advanceUnit, removeFromTimeline, getNextUnit, sortTimeline } from '@/engine/systems/initiative';
+import { createMomentumState, applyMomentum, consumeMomentum } from '@/engine/systems/momentum';
+import { checkHazardDamage, damageTile } from '@/engine/systems/environment';
 import {
   createAIState, updateAwareness, decideAction, alertNearbyEnemies,
   AIAction, AIState
-} from '../systems/ai';
+} from '@/engine/systems/ai';
 
 function addLog(logs: CombatLogEntry[], turn: number, message: string, type: CombatLogEntry['type']): CombatLogEntry[] {
   return [...logs, { turn, timestamp: Date.now(), message, type }];

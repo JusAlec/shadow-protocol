@@ -4,6 +4,8 @@
 import React, { useEffect, useCallback } from 'react';
 import { useGameState } from '../engine/useGameState';
 import { useAnimations } from '../engine/useAnimations';
+import { eventBus } from '../engine/events';
+import { playShoot, playExplosion, playMove, playCriticalHit, playMiss, playHeal, playUnitKilled, playAbility } from '../engine/audio';
 import TacticalMap from '../components/game/TacticalMap';
 import TacticalHUD from '../components/game/TacticalHUD';
 import TimelineBar from '../components/game/TimelineBar';

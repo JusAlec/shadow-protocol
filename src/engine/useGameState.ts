@@ -25,6 +25,14 @@ import {
   AIAction, AIState
 } from '@/engine/systems/ai';
 
+// Animation callback type
+export type AnimationCallbacks = {
+  showDamageNumber: (pos: Position, value: number, critical: boolean, miss?: boolean, heal?: boolean) => void;
+  showExplosion: (pos: Position, radius: number, type?: string) => void;
+  animateUnitMove: (unitId: string, from: Position, to: Position, duration?: number) => void;
+  triggerScreenShake: (intensity?: number) => void;
+};
+
 function addLog(logs: CombatLogEntry[], turn: number, message: string, type: CombatLogEntry['type']): CombatLogEntry[] {
   return [...logs, { turn, timestamp: Date.now(), message, type }];
 }
@@ -33,13 +41,18 @@ export function useGameState() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const aiStatesRef = useRef<Map<string, AIState>>(new Map());
   const processingAI = useRef(false);
+  const animCallbacksRef = useRef<AnimationCallbacks | null>(null);
+
+  // Register animation callbacks
+  const registerAnimations = useCallback((cbs: AnimationCallbacks) => {
+    animCallbacksRef.current = cbs;
+  }, []);
 
   // Initialize game
   const initGame = useCallback(() => {
     const grid = generateDemoMap();
     const spawns = getDemoSpawns();
 
-    // Create player operatives
     const players: Unit[] = [
       { ...createOperative('specter', 'specter'), position: spawns.playerSpawns[0] },
       { ...createOperative('bulldog', 'bulldog'), position: spawns.playerSpawns[1] },
@@ -47,7 +60,6 @@ export function useGameState() {
       { ...createOperative('phantom', 'phantom'), position: spawns.playerSpawns[3] },
     ];
 
-    // Create enemies
     const enemies: Unit[] = [
       { ...createEnemy('grunt1', 'grunt'), position: spawns.enemySpawns[0] },
       { ...createEnemy('grunt2', 'grunt'), position: spawns.enemySpawns[1] },
@@ -58,13 +70,11 @@ export function useGameState() {
 
     const allUnits = [...players, ...enemies];
 
-    // Mark occupied tiles
     for (const unit of allUnits) {
       grid[unit.position.y][unit.position.x].occupied = true;
       grid[unit.position.y][unit.position.x].occupantId = unit.id;
     }
 
-    // Initialize AI states
     const aiMap = new Map<string, AIState>();
     for (const enemy of enemies) {
       aiMap.set(enemy.id, createAIState([
@@ -76,10 +86,7 @@ export function useGameState() {
     }
     aiStatesRef.current = aiMap;
 
-    // Calculate initial visibility
     const { unitVisibility, squadVisibility } = calculateSquadVisibility(allUnits, grid, 12, 12);
-
-    // Initialize timeline
     const timeline = initializeTimeline(allUnits);
     const activeUnitId = getNextUnit(timeline);
 
@@ -103,7 +110,6 @@ export function useGameState() {
       mapHeight: 12,
     };
 
-    // If first unit is player, show movement range
     const activeUnit = allUnits.find(u => u.id === activeUnitId);
     if (activeUnit?.faction === 'player') {
       state.phase = 'player_turn';
@@ -141,6 +147,12 @@ export function useGameState() {
         const abilityId = action.replace('ability:', '');
         const ability = ABILITIES[abilityId];
         if (!ability) return prev;
+
+        // Self-target abilities execute immediately
+        if (ability.targetType === 'self') {
+          return executeSelfAbility(prev, unit, abilityId);
+        }
+
         const range = ability.range || 1;
         const inRange = getTilesInRange(unit.position, range, prev.grid);
         return { ...prev, selectedAction: action, targetingMode: true, movementRange: [], attackRange: inRange };
@@ -157,13 +169,13 @@ export function useGameState() {
       if (!unit || unit.faction !== 'player') return prev;
 
       if (prev.selectedAction === 'move') {
-        return executeMove(prev, unit, pos);
+        return executeMove(prev, unit, pos, animCallbacksRef.current);
       }
       if (prev.selectedAction === 'shoot') {
-        return executeShoot(prev, unit, pos);
+        return executeShoot(prev, unit, pos, animCallbacksRef.current);
       }
       if (prev.selectedAction?.startsWith('ability:')) {
-        return executeAbility(prev, unit, pos, prev.selectedAction.replace('ability:', ''));
+        return executeAbility(prev, unit, pos, prev.selectedAction.replace('ability:', ''), animCallbacksRef.current);
       }
       return prev;
     });
@@ -241,7 +253,62 @@ export function useGameState() {
     setGameState(prev => {
       if (!prev || !prev.momentum.comboAvailable) return prev;
       let logs = addLog(prev.combatLog, prev.turn, `COMBO: ${comboId.replace(/_/g, ' ').toUpperCase()}!`, 'momentum');
-      return { ...prev, momentum: consumeMomentum(prev.momentum), combatLog: logs };
+
+      // Apply combo effects
+      const ability = ABILITIES[comboId];
+      let newUnits = [...prev.units];
+
+      if (comboId === 'tactical_barrage' && ability?.damage) {
+        // Deal massive damage to nearest visible enemy
+        const enemies = prev.units.filter(u => u.faction === 'enemy' && u.alive);
+        const visibleEnemy = enemies.find(e =>
+          prev.squadVisibility[`${e.position.x},${e.position.y}`] === 'visible'
+        );
+        if (visibleEnemy) {
+          newUnits = newUnits.map(u => {
+            if (u.id === visibleEnemy.id) {
+              const newHealth = Math.max(0, u.stats.health - ability.damage!);
+              return { ...u, stats: { ...u.stats, health: newHealth }, alive: newHealth > 0 };
+            }
+            return u;
+          });
+          logs = addLog(logs, prev.turn, `Tactical Barrage hit ${visibleEnemy.name} for ${ability.damage} damage!`, 'damage');
+          animCallbacksRef.current?.showDamageNumber(visibleEnemy.position, ability.damage, true);
+          animCallbacksRef.current?.triggerScreenShake(2);
+          animCallbacksRef.current?.showExplosion(visibleEnemy.position, 1, 'impact');
+        }
+      } else if (comboId === 'breach_assault') {
+        // Buff all player units
+        newUnits = newUnits.map(u => {
+          if (u.faction === 'player' && u.alive) {
+            return {
+              ...u,
+              statusEffects: [...u.statusEffects, { type: 'buff_speed' as const, duration: 2 }, { type: 'buff_accuracy' as const, duration: 2 }],
+            };
+          }
+          return u;
+        });
+        logs = addLog(logs, prev.turn, 'All operatives gain speed and accuracy boost!', 'ability');
+      } else if (comboId === 'coordinated_strike' && ability?.damage) {
+        const enemies = prev.units.filter(u => u.faction === 'enemy' && u.alive);
+        const visibleEnemy = enemies.find(e =>
+          prev.squadVisibility[`${e.position.x},${e.position.y}`] === 'visible'
+        );
+        if (visibleEnemy) {
+          newUnits = newUnits.map(u => {
+            if (u.id === visibleEnemy.id) {
+              const newHealth = Math.max(0, u.stats.health - ability.damage!);
+              return { ...u, stats: { ...u.stats, health: newHealth }, alive: newHealth > 0 };
+            }
+            return u;
+          });
+          logs = addLog(logs, prev.turn, `Coordinated Strike hit ${visibleEnemy.name} for ${ability.damage} damage!`, 'damage');
+          animCallbacksRef.current?.showDamageNumber(visibleEnemy.position, ability.damage, false);
+          animCallbacksRef.current?.showExplosion(visibleEnemy.position, 1, 'impact');
+        }
+      }
+
+      return { ...prev, units: newUnits, momentum: consumeMomentum(prev.momentum), combatLog: logs };
     });
   }, []);
 
@@ -258,7 +325,7 @@ export function useGameState() {
     const timer = setTimeout(() => {
       setGameState(prev => {
         if (!prev) return prev;
-        return processAITurn(prev, aiStatesRef.current);
+        return processAITurn(prev, aiStatesRef.current, animCallbacksRef.current);
       });
       processingAI.current = false;
     }, 800);
@@ -276,18 +343,21 @@ export function useGameState() {
     endTurn,
     useCombo,
     setHoveredTile,
+    registerAnimations,
   };
 }
 
 // --- Internal state transitions ---
-function executeMove(state: GameState, unit: Unit, pos: Position): GameState {
+function executeMove(state: GameState, unit: Unit, pos: Position, anim: AnimationCallbacks | null): GameState {
   const isReachable = state.movementRange.some(p => p.x === pos.x && p.y === pos.y);
   if (!isReachable) return state;
 
   const path = findPath(unit.position, pos, state.grid, unit.stats.movement);
   if (!path) return state;
 
-  // Update grid occupancy
+  // Trigger movement animation
+  anim?.animateUnitMove(unit.id, unit.position, pos, 350);
+
   const newGrid = state.grid.map(row => row.map(t => ({ ...t })));
   newGrid[unit.position.y][unit.position.x].occupied = false;
   newGrid[unit.position.y][unit.position.x].occupantId = undefined;
@@ -299,11 +369,8 @@ function executeMove(state: GameState, unit: Unit, pos: Position): GameState {
   );
 
   const newTimeline = advanceUnit(state.timeline, unit.id, 'move', unit.stats.speed);
-
-  // Recalculate visibility
   const { unitVisibility, squadVisibility } = calculateSquadVisibility(newUnits, newGrid, state.mapWidth, state.mapHeight, state.squadVisibility);
 
-  // Check hazard
   const movedUnit = newUnits.find(u => u.id === unit.id)!;
   const hazardDmg = checkHazardDamage(movedUnit, newGrid);
 
@@ -311,6 +378,7 @@ function executeMove(state: GameState, unit: Unit, pos: Position): GameState {
   logs = addLog(logs, state.turn, `${unit.name} moved to (${pos.x}, ${pos.y}).`, 'movement');
   if (hazardDmg > 0) {
     logs = addLog(logs, state.turn, `${unit.name} took ${hazardDmg} hazard damage!`, 'environment');
+    anim?.showDamageNumber(pos, hazardDmg, false);
   }
 
   return advanceTurn({
@@ -328,12 +396,11 @@ function executeMove(state: GameState, unit: Unit, pos: Position): GameState {
   });
 }
 
-function executeShoot(state: GameState, attacker: Unit, pos: Position): GameState {
+function executeShoot(state: GameState, attacker: Unit, pos: Position, anim: AnimationCallbacks | null): GameState {
   const targetTile = state.grid[pos.y]?.[pos.x];
   if (!targetTile?.occupantId) {
-    // Check if destructible tile
     if (targetTile?.destructible) {
-      return executeShootTile(state, attacker, pos);
+      return executeShootTile(state, attacker, pos, anim);
     }
     return state;
   }
@@ -371,6 +438,13 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position): GameStat
       `${attacker.name} hit ${defender.name} for ${result.damage} damage${result.critical ? ' (CRITICAL!)' : ''} [${Math.round(result.hitChance)}% chance]`,
       'damage');
 
+    // Animations
+    anim?.showDamageNumber(defender.position, result.damage, result.critical);
+    if (result.critical) {
+      anim?.triggerScreenShake(1.5);
+    }
+    anim?.showExplosion(defender.position, 0.3, 'impact');
+
     if (result.critical) momentum = applyMomentum(momentum, 'critical_hit');
     if (result.flanking) momentum = applyMomentum(momentum, 'flank');
 
@@ -378,12 +452,13 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position): GameStat
     if (killed && !killed.alive) {
       logs = addLog(logs, state.turn, `${defender.name} eliminated!`, 'kill');
       momentum = applyMomentum(momentum, 'kill');
-      // Remove from timeline
       const filteredTimeline = removeFromTimeline(newTimeline, defender.id);
-      // Clear occupancy
       const newGrid = state.grid.map(row => row.map(t => ({ ...t })));
       newGrid[defender.position.y][defender.position.x].occupied = false;
       newGrid[defender.position.y][defender.position.x].occupantId = undefined;
+
+      anim?.showExplosion(defender.position, 0.5, 'explosion');
+      anim?.triggerScreenShake(1);
 
       return advanceTurn({
         ...state,
@@ -401,6 +476,7 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position): GameStat
   } else {
     logs = addLog(logs, state.turn, `${attacker.name} missed ${defender.name} [${Math.round(result.hitChance)}% chance]`, 'damage');
     if (attacker.faction === 'player') momentum = applyMomentum(momentum, 'miss');
+    anim?.showDamageNumber(defender.position, 0, false, true);
   }
 
   return advanceTurn({
@@ -416,7 +492,7 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position): GameStat
   });
 }
 
-function executeShootTile(state: GameState, attacker: Unit, pos: Position): GameState {
+function executeShootTile(state: GameState, attacker: Unit, pos: Position, anim: AnimationCallbacks | null): GameState {
   const weapon = WEAPONS[attacker.weaponId];
   if (!weapon || attacker.ammo <= 0) return state;
 
@@ -432,6 +508,10 @@ function executeShootTile(state: GameState, attacker: Unit, pos: Position): Game
   if (tile.type === 'floor' && state.grid[pos.y][pos.x].type !== 'floor') {
     logs = addLog(logs, state.turn, `Object destroyed at (${pos.x}, ${pos.y})!`, 'environment');
     momentum = applyMomentum(momentum, 'destroy_cover');
+    anim?.showExplosion(pos, 1, 'explosion');
+    anim?.triggerScreenShake(1);
+  } else {
+    anim?.showExplosion(pos, 0.3, 'impact');
   }
 
   const { unitVisibility, squadVisibility } = calculateSquadVisibility(newUnits, newGrid, state.mapWidth, state.mapHeight, state.squadVisibility);
@@ -452,7 +532,46 @@ function executeShootTile(state: GameState, attacker: Unit, pos: Position): Game
   });
 }
 
-function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: string): GameState {
+// Self-target ability (e.g., adrenal_boost) - no tile click needed
+function executeSelfAbility(state: GameState, unit: Unit, abilityId: string): GameState {
+  const ability = ABILITIES[abilityId];
+  if (!ability) return state;
+  if ((unit.abilityCooldowns[abilityId] || 0) > 0) return state;
+
+  let newUnits = state.units.map(u => {
+    if (u.id === unit.id) {
+      const newEffects = [...u.statusEffects];
+      if (ability.effects) {
+        for (const eff of ability.effects) {
+          newEffects.push({ type: eff.status, duration: eff.duration });
+        }
+      }
+      return {
+        ...u,
+        actionPoints: u.actionPoints - ability.cost,
+        abilityCooldowns: { ...u.abilityCooldowns, [abilityId]: ability.cooldown },
+        statusEffects: newEffects,
+      };
+    }
+    return u;
+  });
+
+  let logs = addLog(state.combatLog, state.turn, `${unit.name} used ${ability.name}!`, 'ability');
+  const newTimeline = advanceUnit(state.timeline, unit.id, 'ability', unit.stats.speed);
+
+  return advanceTurn({
+    ...state,
+    units: newUnits,
+    timeline: newTimeline,
+    combatLog: logs,
+    selectedAction: null,
+    targetingMode: false,
+    movementRange: [],
+    attackRange: [],
+  });
+}
+
+function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: string, anim: AnimationCallbacks | null): GameState {
   const ability = ABILITIES[abilityId];
   if (!ability) return state;
   if ((unit.abilityCooldowns[abilityId] || 0) > 0) return state;
@@ -472,21 +591,91 @@ function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: 
   let momentum = state.momentum;
   let newGrid = state.grid.map(row => row.map(t => ({ ...t })));
 
-  // Apply effects based on ability type
-  if (ability.damage && ability.targetType === 'area' && ability.radius) {
-    // AoE damage
+  // --- Headshot: single-target attack with crit bonus ---
+  if (abilityId === 'headshot') {
+    const targetTile = state.grid[pos.y]?.[pos.x];
+    const defender = targetTile?.occupantId
+      ? state.units.find(u => u.id === targetTile.occupantId && u.alive)
+      : null;
+    if (defender) {
+      const result = resolveAttack(unit, defender, state.grid, ability.critBonus || 0);
+      newUnits = newUnits.map(u => {
+        if (u.id === unit.id) return { ...u, ammo: Math.max(0, u.ammo - 1) };
+        if (u.id === defender.id && result.hit) {
+          const newHealth = Math.max(0, u.stats.health - result.damage);
+          return { ...u, stats: { ...u.stats, health: newHealth }, alive: newHealth > 0 };
+        }
+        return u;
+      });
+      if (result.hit) {
+        logs = addLog(logs, state.turn, `Headshot hit ${defender.name} for ${result.damage}${result.critical ? ' (CRITICAL!)' : ''}`, 'damage');
+        anim?.showDamageNumber(defender.position, result.damage, result.critical);
+        if (result.critical) {
+          anim?.triggerScreenShake(2);
+          momentum = applyMomentum(momentum, 'critical_hit');
+        }
+        anim?.showExplosion(defender.position, 0.3, 'impact');
+        const killed = newUnits.find(u => u.id === defender.id);
+        if (killed && !killed.alive) {
+          logs = addLog(logs, state.turn, `${defender.name} eliminated!`, 'kill');
+          momentum = applyMomentum(momentum, 'kill');
+        }
+      } else {
+        logs = addLog(logs, state.turn, `Headshot missed ${defender.name}!`, 'damage');
+        anim?.showDamageNumber(defender.position, 0, false, true);
+      }
+    }
+  }
+  // --- AoE damage abilities (frag_grenade, suppression) ---
+  else if (ability.damage && ability.targetType === 'area' && ability.radius) {
+    anim?.showExplosion(pos, ability.radius, abilityId === 'frag_grenade' ? 'explosion' : 'impact');
+    anim?.triggerScreenShake(ability.damage > 20 ? 1.5 : 0.8);
+
     for (const target of newUnits) {
       if (!target.alive) continue;
       const dist = getDistance(pos, target.position);
       if (dist <= ability.radius) {
-        const newHealth = Math.max(0, target.stats.health - ability.damage);
         const idx = newUnits.findIndex(u => u.id === target.id);
+        const newHealth = Math.max(0, newUnits[idx].stats.health - ability.damage);
         newUnits[idx] = { ...newUnits[idx], stats: { ...newUnits[idx].stats, health: newHealth }, alive: newHealth > 0 };
         logs = addLog(logs, state.turn, `${target.name} took ${ability.damage} ability damage!`, 'damage');
+        anim?.showDamageNumber(target.position, ability.damage, false);
         if (newHealth <= 0) {
           logs = addLog(logs, state.turn, `${target.name} eliminated!`, 'kill');
           if (target.faction === 'enemy') momentum = applyMomentum(momentum, 'kill');
         }
+      }
+    }
+
+    // Destroy destructible tiles in radius
+    for (let dy = -ability.radius; dy <= ability.radius; dy++) {
+      for (let dx = -ability.radius; dx <= ability.radius; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > ability.radius) continue;
+        const tx = pos.x + dx;
+        const ty = pos.y + dy;
+        const tile = newGrid[ty]?.[tx];
+        if (tile?.destructible) {
+          newGrid = damageTile(newGrid, { x: tx, y: ty }, ability.damage, newUnits);
+        }
+      }
+    }
+  }
+  // --- Single-target damage abilities (turret_deploy, etc.) ---
+  else if (ability.damage && ability.targetType === 'single') {
+    const targetTile = state.grid[pos.y]?.[pos.x];
+    const defender = targetTile?.occupantId
+      ? newUnits.find(u => u.id === targetTile.occupantId && u.alive)
+      : null;
+    if (defender) {
+      const idx = newUnits.findIndex(u => u.id === defender.id);
+      const newHealth = Math.max(0, defender.stats.health - ability.damage);
+      newUnits[idx] = { ...newUnits[idx], stats: { ...newUnits[idx].stats, health: newHealth }, alive: newHealth > 0 };
+      logs = addLog(logs, state.turn, `${ability.name} hit ${defender.name} for ${ability.damage} damage!`, 'damage');
+      anim?.showDamageNumber(defender.position, ability.damage, false);
+      anim?.showExplosion(defender.position, 0.3, 'impact');
+      if (newHealth <= 0) {
+        logs = addLog(logs, state.turn, `${defender.name} eliminated!`, 'kill');
+        if (defender.faction === 'enemy') momentum = applyMomentum(momentum, 'kill');
       }
     }
   }
@@ -495,30 +684,85 @@ function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: 
   if (ability.effects) {
     for (const effect of ability.effects) {
       if (ability.targetType === 'area' && ability.radius) {
-        for (const target of newUnits) {
-          if (!target.alive) continue;
-          if (getDistance(pos, target.position) <= ability.radius) {
-            const idx = newUnits.findIndex(u => u.id === target.id);
+        for (let i = 0; i < newUnits.length; i++) {
+          if (!newUnits[i].alive) continue;
+          if (getDistance(pos, newUnits[i].position) <= ability.radius) {
+            const newEffects = [...newUnits[i].statusEffects, { type: effect.status, duration: effect.duration }];
+            newUnits[i] = { ...newUnits[i], statusEffects: newEffects };
+          }
+        }
+      } else if (ability.targetType === 'single') {
+        const targetTile = state.grid[pos.y]?.[pos.x];
+        if (targetTile?.occupantId) {
+          const idx = newUnits.findIndex(u => u.id === targetTile.occupantId);
+          if (idx >= 0) {
             const newEffects = [...newUnits[idx].statusEffects, { type: effect.status, duration: effect.duration }];
             newUnits[idx] = { ...newUnits[idx], statusEffects: newEffects };
           }
         }
-      } else if (ability.targetType === 'self') {
-        const idx = newUnits.findIndex(u => u.id === unit.id);
-        const newEffects = [...newUnits[idx].statusEffects, { type: effect.status, duration: effect.duration }];
-        newUnits[idx] = { ...newUnits[idx], statusEffects: newEffects };
       }
     }
+  }
+
+  // Smoke screen: block vision on affected tiles
+  if (abilityId === 'smoke_screen' && ability.radius) {
+    for (let dy = -ability.radius; dy <= ability.radius; dy++) {
+      for (let dx = -ability.radius; dx <= ability.radius; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > ability.radius) continue;
+        const tx = pos.x + dx;
+        const ty = pos.y + dy;
+        if (newGrid[ty]?.[tx]) {
+          newGrid[ty][tx] = { ...newGrid[ty][tx], blocksVision: true };
+        }
+      }
+    }
+    anim?.showExplosion(pos, ability.radius, 'smoke');
+  }
+
+  // Recon drone: reveal area
+  if (abilityId === 'recon_drone' && ability.radius) {
+    // Revealing is handled by recalculating visibility with boosted range
+    // For now, just mark tiles as visible in squad visibility
+    logs = addLog(logs, state.turn, `Drone deployed - area revealed!`, 'info');
   }
 
   const newTimeline = advanceUnit(state.timeline, unit.id, 'ability', unit.stats.speed);
   const { unitVisibility, squadVisibility } = calculateSquadVisibility(newUnits, newGrid, state.mapWidth, state.mapHeight, state.squadVisibility);
 
+  // For recon drone, force-reveal tiles in radius
+  if (abilityId === 'recon_drone' && ability.radius) {
+    for (let dy = -(ability.radius + ability.range!); dy <= (ability.radius + ability.range!); dy++) {
+      for (let dx = -(ability.radius + ability.range!); dx <= (ability.radius + ability.range!); dx++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist > ability.radius) continue;
+        const tx = pos.x + dx;
+        const ty = pos.y + dy;
+        const key = `${tx},${ty}`;
+        if (tx >= 0 && tx < state.mapWidth && ty >= 0 && ty < state.mapHeight) {
+          squadVisibility[key] = 'visible';
+        }
+      }
+    }
+  }
+
+  // Clean up dead units from timeline
+  let finalTimeline = newTimeline;
+  for (const u of newUnits) {
+    if (!u.alive) {
+      finalTimeline = removeFromTimeline(finalTimeline, u.id);
+      // Clear occupancy
+      if (newGrid[u.position.y]?.[u.position.x]) {
+        newGrid[u.position.y][u.position.x].occupied = false;
+        newGrid[u.position.y][u.position.x].occupantId = undefined;
+      }
+    }
+  }
+
   return advanceTurn({
     ...state,
     units: newUnits,
     grid: newGrid,
-    timeline: newTimeline,
+    timeline: finalTimeline,
     momentum,
     visibility: unitVisibility,
     squadVisibility,
@@ -531,7 +775,6 @@ function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: 
 }
 
 function advanceTurn(state: GameState): GameState {
-  // Check win/lose conditions
   const playerAlive = state.units.filter(u => u.faction === 'player' && u.alive);
   const enemyAlive = state.units.filter(u => u.faction === 'enemy' && u.alive);
 
@@ -550,30 +793,25 @@ function advanceTurn(state: GameState): GameState {
     };
   }
 
-  // Clean dead units from timeline
   let timeline = state.timeline.filter(e => {
     const unit = state.units.find(u => u.id === e.unitId);
     return unit?.alive;
   });
 
-  // Get next unit
   const nextId = getNextUnit(timeline);
   if (!nextId) return { ...state, phase: 'victory' };
 
   const nextUnit = state.units.find(u => u.id === nextId);
   if (!nextUnit) return state;
 
-  // Tick status effects for the next unit
   const newUnits = state.units.map(u => {
     if (u.id === nextId) {
       const updated = { ...u, actionPoints: u.maxActionPoints, overwatching: false };
-      // Reduce cooldowns
       const newCooldowns: Record<string, number> = {};
       for (const [key, val] of Object.entries(updated.abilityCooldowns)) {
         if (val > 0) newCooldowns[key] = val - 1;
       }
       updated.abilityCooldowns = newCooldowns;
-      // Tick status effects
       updated.statusEffects = updated.statusEffects
         .map(e => ({ ...e, duration: e.duration - 1 }))
         .filter(e => e.duration > 0);
@@ -594,36 +832,31 @@ function advanceTurn(state: GameState): GameState {
   };
 }
 
-function processAITurn(state: GameState, aiStates: Map<string, AIState>): GameState {
+function processAITurn(state: GameState, aiStates: Map<string, AIState>, anim: AnimationCallbacks | null): GameState {
   const enemy = state.units.find(u => u.id === state.activeUnitId);
-  if (!enemy || enemy.faction !== 'player') {
-    // It's an enemy - process AI
-    if (!enemy || !enemy.alive) return advanceTurn(state);
+  if (!enemy || enemy.faction === 'player') return state;
+  if (!enemy.alive) return advanceTurn(state);
 
-    const playerUnits = state.units.filter(u => u.faction === 'player' && u.alive);
-    const enemyUnits = state.units.filter(u => u.faction === 'enemy' && u.alive);
+  const playerUnits = state.units.filter(u => u.faction === 'player' && u.alive);
+  const enemyUnits = state.units.filter(u => u.faction === 'enemy' && u.alive);
 
-    // Update awareness
-    let aiState = aiStates.get(enemy.id) || createAIState();
-    aiState = updateAwareness(enemy, aiState, playerUnits, state.grid);
-    aiStates.set(enemy.id, aiState);
+  let aiState = aiStates.get(enemy.id) || createAIState();
+  aiState = updateAwareness(enemy, aiState, playerUnits, state.grid);
+  aiStates.set(enemy.id, aiState);
 
-    // Decide action
-    const action = decideAction(enemy, aiState, playerUnits, enemyUnits, state.grid);
-
-    // Execute action
-    return executeAIAction(state, enemy, action, aiStates);
-  }
-
-  return state;
+  const action = decideAction(enemy, aiState, playerUnits, enemyUnits, state.grid);
+  return executeAIAction(state, enemy, action, aiStates, anim);
 }
 
-function executeAIAction(state: GameState, enemy: Unit, action: AIAction, aiStates: Map<string, AIState>): GameState {
+function executeAIAction(state: GameState, enemy: Unit, action: AIAction, aiStates: Map<string, AIState>, anim: AnimationCallbacks | null): GameState {
   let logs = state.combatLog;
 
   switch (action.type) {
     case 'move': {
       if (!action.targetPosition) break;
+
+      anim?.animateUnitMove(enemy.id, enemy.position, action.targetPosition, 350);
+
       const newGrid = state.grid.map(row => row.map(t => ({ ...t })));
       newGrid[enemy.position.y][enemy.position.x].occupied = false;
       newGrid[enemy.position.y][enemy.position.x].occupantId = undefined;
@@ -669,15 +902,20 @@ function executeAIAction(state: GameState, enemy: Unit, action: AIAction, aiStat
         logs = addLog(logs, state.turn,
           `${enemy.name} hit ${target.name} for ${result.damage} damage${result.critical ? ' (CRITICAL!)' : ''}`,
           'damage');
+        anim?.showDamageNumber(target.position, result.damage, result.critical);
+        anim?.showExplosion(target.position, 0.3, 'impact');
+        if (result.critical) anim?.triggerScreenShake(1.5);
+
         const killed = newUnits.find(u => u.id === target.id);
         if (killed && !killed.alive) {
           logs = addLog(logs, state.turn, `${target.name} is down!`, 'kill');
+          anim?.triggerScreenShake(1);
         }
       } else {
         logs = addLog(logs, state.turn, `${enemy.name} missed ${target.name}.`, 'damage');
+        anim?.showDamageNumber(target.position, 0, false, true);
       }
 
-      // Alert nearby enemies
       alertNearbyEnemies(enemy, state.units.filter(u => u.faction === 'enemy'), aiStates);
 
       return advanceTurn({ ...state, units: newUnits, timeline: newTimeline, combatLog: logs });
@@ -697,6 +935,18 @@ function executeAIAction(state: GameState, enemy: Unit, action: AIAction, aiStat
         }
         return u;
       });
+
+      // Apply damage
+      if (ability.damage && action.targetUnitId) {
+        const target = newUnits.find(u => u.id === action.targetUnitId);
+        if (target) {
+          const idx = newUnits.findIndex(u => u.id === target.id);
+          const newHealth = Math.max(0, target.stats.health - ability.damage);
+          newUnits[idx] = { ...newUnits[idx], stats: { ...newUnits[idx].stats, health: newHealth }, alive: newHealth > 0 };
+          anim?.showDamageNumber(target.position, ability.damage, false);
+          anim?.showExplosion(target.position, 0.5, 'impact');
+        }
+      }
 
       // Apply effects
       if (ability.effects && action.targetUnitId) {
@@ -719,7 +969,6 @@ function executeAIAction(state: GameState, enemy: Unit, action: AIAction, aiStat
       break;
   }
 
-  // Idle or failed action - just advance
   const newTimeline = advanceUnit(state.timeline, enemy.id, 'end_turn', enemy.stats.speed);
   return advanceTurn({ ...state, timeline: newTimeline, combatLog: logs });
 }

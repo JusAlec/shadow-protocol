@@ -592,6 +592,7 @@ function executeAbility(state: GameState, unit: Unit, pos: Position, abilityId: 
   });
 
   let logs = addLog(state.combatLog, state.turn, `${unit.name} used ${ability.name}!`, 'ability');
+  eventBus.emit('ability_used', { unitId: unit.id, abilityId, abilityName: ability.name });
   let momentum = state.momentum;
   let newGrid = state.grid.map(row => row.map(t => ({ ...t })));
 

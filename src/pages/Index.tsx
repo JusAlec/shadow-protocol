@@ -3,6 +3,7 @@
 // ============================================================
 import React, { useEffect, useCallback } from 'react';
 import { useGameState } from '../engine/useGameState';
+import { useAnimations } from '../engine/useAnimations';
 import TacticalMap from '../components/game/TacticalMap';
 import TacticalHUD from '../components/game/TacticalHUD';
 import TimelineBar from '../components/game/TimelineBar';
@@ -12,7 +13,15 @@ const Index = () => {
   const {
     gameState, initGame, selectAction, handleTileClick,
     executeReload, executeOverwatch, endTurn, useCombo, setHoveredTile,
+    registerAnimations,
   } = useGameState();
+
+  const { animState, showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake } = useAnimations();
+
+  // Register animation callbacks with game state
+  useEffect(() => {
+    registerAnimations({ showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake });
+  }, [registerAnimations, showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake]);
 
   useEffect(() => {
     initGame();
@@ -145,6 +154,7 @@ const Index = () => {
               gameState={gameState}
               onTileClick={handleTileClick}
               onTileHover={setHoveredTile}
+              animState={animState}
             />
           </div>
           {/* Timeline */}

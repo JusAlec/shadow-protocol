@@ -1,20 +1,23 @@
 // ============================================================
 // Shadow Protocol - SVG Tactical Map Renderer
 // ============================================================
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { GameState, Position, TileData, Unit, VisibilityState } from '../../engine/types';
 import { calculateHitChance, getDistance } from '../../engine/systems/combat';
 import { hasLineOfSight } from '../../engine/systems/visibility';
 import { WEAPONS } from '../../engine/data/weapons';
+import { AnimationState } from '../../engine/useAnimations';
+import CombatEffects from './CombatEffects';
 
 interface TacticalMapProps {
   gameState: GameState;
   onTileClick: (pos: Position) => void;
   onTileHover: (pos: Position | null) => void;
+  animState: AnimationState;
 }
 
-const TILE_SIZE = 56;
-const GAP = 1;
+export const TILE_SIZE = 56;
+export const GAP = 1;
 const CELL = TILE_SIZE + GAP;
 
 const TILE_COLORS: Record<string, string> = {
@@ -57,7 +60,7 @@ const UNIT_COLORS: Record<string, string> = {
   medic: 'hsl(140 60% 45%)',
 };
 
-const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTileHover }) => {
+const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTileHover, animState }) => {
   const { grid, units, squadVisibility, movementRange, attackRange, activeUnitId, selectedAction, hoveredTile } = gameState;
   const mapW = CELL * 12 + GAP;
   const mapH = CELL * 12 + GAP;
@@ -86,8 +89,40 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
     return attackRange.some(p => p.x === x && p.y === y);
   }, [attackRange]);
 
+  // Calculate animated unit positions
+  const getUnitRenderPos = useCallback((unit: Unit) => {
+    const anim = animState.unitAnimations.find(a => a.unitId === unit.id);
+    if (anim) {
+      const elapsed = Date.now() - anim.timestamp;
+      const progress = Math.min(1, elapsed / anim.duration);
+      // Ease out quad
+      const eased = 1 - (1 - progress) * (1 - progress);
+      return {
+        x: anim.from.x + (anim.to.x - anim.from.x) * eased,
+        y: anim.from.y + (anim.to.y - anim.from.y) * eased,
+      };
+    }
+    return { x: unit.position.x, y: unit.position.y };
+  }, [animState.unitAnimations]);
+
+  // Re-render during animations
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (animState.unitAnimations.length === 0 && animState.damageNumbers.length === 0 && animState.explosions.length === 0) return;
+    const id = requestAnimationFrame(() => setTick(t => t + 1));
+    return () => cancelAnimationFrame(id);
+  }, [animState, setTick]);
+
+  // Screen shake transform
+  const shakeTransform = animState.screenShake
+    ? `translate(${(Math.random() - 0.5) * 6 * animState.screenShakeIntensity}px, ${(Math.random() - 0.5) * 6 * animState.screenShakeIntensity}px)`
+    : undefined;
+
   return (
-    <div className="relative overflow-auto rounded-lg border border-border/30 bg-[hsl(220,15%,8%)]">
+    <div
+      className="relative overflow-auto rounded-lg border border-border/30 bg-[hsl(220,15%,8%)]"
+      style={{ transform: shakeTransform, transition: animState.screenShake ? 'none' : 'transform 0.1s ease-out' }}
+    >
       <svg
         width={mapW}
         height={mapH}
@@ -95,7 +130,6 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
         className="block"
       >
         <defs>
-          {/* Fog of war filter */}
           <filter id="fog-hidden">
             <feColorMatrix type="saturate" values="0" />
             <feComponentTransfer>
@@ -119,6 +153,15 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <filter id="crit-glow">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feFlood floodColor="hsl(45 100% 60%)" floodOpacity="0.6" result="color" />
+            <feComposite in="color" in2="blur" operator="in" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
         {/* Grid tiles */}
@@ -139,7 +182,6 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
                 className="cursor-pointer"
                 filter={vis === 'hidden' ? 'url(#fog-hidden)' : vis === 'detected' ? 'url(#fog-detected)' : undefined}
               >
-                {/* Base tile */}
                 <rect
                   x={x * CELL + GAP}
                   y={y * CELL + GAP}
@@ -158,76 +200,52 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
                   opacity={vis === 'hidden' ? 0.3 : 1}
                 />
 
-                {/* Movement range overlay */}
                 {inMoveRange && (
                   <rect
-                    x={x * CELL + GAP}
-                    y={y * CELL + GAP}
-                    width={TILE_SIZE}
-                    height={TILE_SIZE}
-                    rx={3}
-                    fill="hsl(120 70% 45%)"
-                    opacity={0.15}
+                    x={x * CELL + GAP} y={y * CELL + GAP}
+                    width={TILE_SIZE} height={TILE_SIZE} rx={3}
+                    fill="hsl(120 70% 45%)" opacity={0.15}
                   />
                 )}
 
-                {/* Attack range overlay */}
                 {inAtkRange && (
                   <rect
-                    x={x * CELL + GAP}
-                    y={y * CELL + GAP}
-                    width={TILE_SIZE}
-                    height={TILE_SIZE}
-                    rx={3}
-                    fill="hsl(0 70% 50%)"
-                    opacity={0.12}
+                    x={x * CELL + GAP} y={y * CELL + GAP}
+                    width={TILE_SIZE} height={TILE_SIZE} rx={3}
+                    fill="hsl(0 70% 50%)" opacity={0.12}
                   />
                 )}
 
-                {/* Tile icon */}
                 {TILE_ICONS[tile.type] && vis !== 'hidden' && (
                   <text
                     x={x * CELL + GAP + TILE_SIZE / 2}
                     y={y * CELL + GAP + TILE_SIZE - 6}
-                    textAnchor="middle"
-                    fontSize={10}
-                    fill="hsl(0 0% 60%)"
-                    pointerEvents="none"
+                    textAnchor="middle" fontSize={10}
+                    fill="hsl(0 0% 60%)" pointerEvents="none"
                   >
                     {TILE_ICONS[tile.type]}
                   </text>
                 )}
 
-                {/* Health bar for destructible tiles */}
                 {tile.destructible && tile.health < tile.maxHealth && vis === 'visible' && (
                   <>
                     <rect
-                      x={x * CELL + GAP + 4}
-                      y={y * CELL + GAP + TILE_SIZE - 6}
-                      width={TILE_SIZE - 8}
-                      height={3}
-                      fill="hsl(0 0% 20%)"
-                      rx={1}
+                      x={x * CELL + GAP + 4} y={y * CELL + GAP + TILE_SIZE - 6}
+                      width={TILE_SIZE - 8} height={3}
+                      fill="hsl(0 0% 20%)" rx={1}
                     />
                     <rect
-                      x={x * CELL + GAP + 4}
-                      y={y * CELL + GAP + TILE_SIZE - 6}
-                      width={(TILE_SIZE - 8) * (tile.health / tile.maxHealth)}
-                      height={3}
-                      fill="hsl(30 80% 50%)"
-                      rx={1}
+                      x={x * CELL + GAP + 4} y={y * CELL + GAP + TILE_SIZE - 6}
+                      width={(TILE_SIZE - 8) * (tile.health / tile.maxHealth)} height={3}
+                      fill="hsl(30 80% 50%)" rx={1}
                     />
                   </>
                 )}
 
-                {/* Elevation indicator */}
                 {tile.elevation > 0 && (
                   <text
-                    x={x * CELL + GAP + 6}
-                    y={y * CELL + GAP + 12}
-                    fontSize={8}
-                    fill="hsl(200 60% 60%)"
-                    pointerEvents="none"
+                    x={x * CELL + GAP + 6} y={y * CELL + GAP + 12}
+                    fontSize={8} fill="hsl(200 60% 60%)" pointerEvents="none"
                   >
                     ↑{tile.elevation}
                   </text>
@@ -240,80 +258,75 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
         {/* Units */}
         {units.filter(u => u.alive).map(unit => {
           const vis = getVisibility(unit.position.x, unit.position.y);
-          // Show enemy only if visible
           if (unit.faction === 'enemy' && vis !== 'visible') return null;
 
-          const cx = unit.position.x * CELL + GAP + TILE_SIZE / 2;
-          const cy = unit.position.y * CELL + GAP + TILE_SIZE / 2;
-          const isActive = unit.id === activeUnitId;
+          const renderPos = getUnitRenderPos(unit);
+          const cx = renderPos.x * CELL + GAP + TILE_SIZE / 2;
+          const cy = renderPos.y * CELL + GAP + TILE_SIZE / 2;
+          const isActiveUnit = unit.id === activeUnitId;
           const color = unit.faction === 'player' ? UNIT_COLORS[unit.class] : 'hsl(0 65% 50%)';
           const healthPct = unit.stats.health / unit.stats.maxHealth;
 
+          // Check if this unit just took damage for flash effect
+          const hasDamageNum = animState.damageNumbers.some(
+            d => d.position.x === unit.position.x && d.position.y === unit.position.y && !d.miss && !d.heal
+          );
+
           return (
-            <g key={unit.id} filter={isActive ? 'url(#glow)' : undefined}>
-              {/* Unit circle */}
+            <g key={unit.id} filter={isActiveUnit ? 'url(#glow)' : undefined}>
+              {/* Damage flash ring */}
+              {hasDamageNum && (
+                <circle
+                  cx={cx} cy={cy} r={22}
+                  fill="none" stroke="hsl(0 80% 55%)" strokeWidth={2}
+                  opacity={0.8}
+                >
+                  <animate attributeName="r" from="16" to="28" dur="0.4s" fill="freeze" />
+                  <animate attributeName="opacity" from="0.8" to="0" dur="0.4s" fill="freeze" />
+                </circle>
+              )}
+
               <circle
-                cx={cx}
-                cy={cy}
-                r={isActive ? 18 : 16}
+                cx={cx} cy={cy}
+                r={isActiveUnit ? 18 : 16}
                 fill={color}
-                stroke={isActive ? 'hsl(45 100% 70%)' : 'hsl(0 0% 10%)'}
-                strokeWidth={isActive ? 2.5 : 1.5}
+                stroke={isActiveUnit ? 'hsl(45 100% 70%)' : 'hsl(0 0% 10%)'}
+                strokeWidth={isActiveUnit ? 2.5 : 1.5}
                 opacity={0.9}
               />
 
-              {/* Unit initial */}
               <text
-                x={cx}
-                y={cy + 1}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={isActive ? 13 : 11}
-                fontWeight="bold"
-                fill="hsl(0 0% 95%)"
-                pointerEvents="none"
+                x={cx} y={cy + 1}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={isActiveUnit ? 13 : 11} fontWeight="bold"
+                fill="hsl(0 0% 95%)" pointerEvents="none"
               >
                 {unit.name[0]}
               </text>
 
-              {/* Health bar */}
               <rect
-                x={cx - 14}
-                y={cy + 19}
-                width={28}
-                height={3}
-                fill="hsl(0 0% 15%)"
-                rx={1.5}
+                x={cx - 14} y={cy + 19}
+                width={28} height={3}
+                fill="hsl(0 0% 15%)" rx={1.5}
               />
               <rect
-                x={cx - 14}
-                y={cy + 19}
-                width={28 * healthPct}
-                height={3}
+                x={cx - 14} y={cy + 19}
+                width={28 * healthPct} height={3}
                 fill={healthPct > 0.6 ? 'hsl(120 70% 45%)' : healthPct > 0.3 ? 'hsl(40 80% 50%)' : 'hsl(0 70% 50%)'}
                 rx={1.5}
               />
 
-              {/* Status effect indicators */}
               {unit.statusEffects.length > 0 && (
                 <circle
-                  cx={cx + 14}
-                  cy={cy - 14}
-                  r={4}
-                  fill="hsl(280 60% 55%)"
-                  stroke="hsl(0 0% 10%)"
-                  strokeWidth={1}
+                  cx={cx + 14} cy={cy - 14} r={4}
+                  fill="hsl(280 60% 55%)" stroke="hsl(0 0% 10%)" strokeWidth={1}
                 />
               )}
 
-              {/* Overwatch indicator */}
               {unit.overwatching && (
                 <text
-                  x={cx - 14}
-                  y={cy - 14}
-                  fontSize={10}
-                  fill="hsl(45 100% 60%)"
-                  pointerEvents="none"
+                  x={cx - 14} y={cy - 14}
+                  fontSize={10} fill="hsl(45 100% 60%)" pointerEvents="none"
                 >
                   👁
                 </text>
@@ -328,22 +341,15 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
             <rect
               x={hoveredTile.x * CELL + GAP + TILE_SIZE + 4}
               y={hoveredTile.y * CELL + GAP}
-              width={50}
-              height={22}
-              fill="hsl(0 0% 10%)"
-              stroke="hsl(0 70% 50%)"
-              strokeWidth={1}
-              rx={4}
-              opacity={0.9}
+              width={50} height={22}
+              fill="hsl(0 0% 10%)" stroke="hsl(0 70% 50%)" strokeWidth={1}
+              rx={4} opacity={0.9}
             />
             <text
               x={hoveredTile.x * CELL + GAP + TILE_SIZE + 29}
               y={hoveredTile.y * CELL + GAP + 15}
-              textAnchor="middle"
-              fontSize={12}
-              fontWeight="bold"
-              fill="hsl(0 0% 95%)"
-              pointerEvents="none"
+              textAnchor="middle" fontSize={12} fontWeight="bold"
+              fill="hsl(0 0% 95%)" pointerEvents="none"
             >
               {Math.round(hoveredHitChance.total)}%
             </text>
@@ -365,6 +371,9 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
             </g>
           );
         })}
+
+        {/* Combat Effects Overlay */}
+        <CombatEffects animState={animState} tileSize={TILE_SIZE} gap={GAP} />
       </svg>
     </div>
   );

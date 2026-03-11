@@ -4,6 +4,8 @@
 import React, { useEffect, useCallback } from 'react';
 import { useGameState } from '../engine/useGameState';
 import { useAnimations } from '../engine/useAnimations';
+import { eventBus } from '../engine/events';
+import { playShoot, playExplosion, playMove, playCriticalHit, playMiss, playHeal, playUnitKilled, playAbility } from '../engine/audio';
 import TacticalMap from '../components/game/TacticalMap';
 import TacticalHUD from '../components/game/TacticalHUD';
 import TimelineBar from '../components/game/TimelineBar';
@@ -22,6 +24,28 @@ const Index = () => {
   useEffect(() => {
     registerAnimations({ showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake });
   }, [registerAnimations, showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake]);
+
+  // Sound effects via event bus
+  useEffect(() => {
+    const unsubs = [
+      eventBus.on('unit_moved', () => playMove()),
+      eventBus.on('unit_attacked', (e) => {
+        if (e.payload.critical) playCriticalHit();
+        else if (e.payload.miss) playMiss();
+        else playShoot();
+      }),
+      eventBus.on('unit_damaged', (e) => {
+        if (e.payload.critical) playCriticalHit();
+      }),
+      eventBus.on('unit_killed', () => playUnitKilled()),
+      eventBus.on('unit_healed', () => playHeal()),
+      eventBus.on('ability_used', () => playAbility()),
+      eventBus.on('cover_destroyed', () => playExplosion()),
+      eventBus.on('tile_destroyed', () => playExplosion()),
+      eventBus.on('hazard_triggered', () => playExplosion()),
+    ];
+    return () => unsubs.forEach(u => u());
+  }, []);
 
   useEffect(() => {
     initGame();

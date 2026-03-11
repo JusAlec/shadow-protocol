@@ -479,6 +479,7 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position, anim: Ani
   } else {
     logs = addLog(logs, state.turn, `${attacker.name} missed ${defender.name} [${Math.round(result.hitChance)}% chance]`, 'damage');
     if (attacker.faction === 'player') momentum = applyMomentum(momentum, 'miss');
+    eventBus.emit('unit_attacked', { attackerId: attacker.id, defenderId: defender.id, hit: false, critical: false, miss: true });
     anim?.showDamageNumber(defender.position, 0, false, true);
   }
 

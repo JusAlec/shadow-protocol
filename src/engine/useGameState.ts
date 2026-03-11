@@ -439,6 +439,8 @@ function executeShoot(state: GameState, attacker: Unit, pos: Position, anim: Ani
       `${attacker.name} hit ${defender.name} for ${result.damage} damage${result.critical ? ' (CRITICAL!)' : ''} [${Math.round(result.hitChance)}% chance]`,
       'damage');
 
+    eventBus.emit('unit_attacked', { attackerId: attacker.id, defenderId: defender.id, hit: true, critical: result.critical, miss: false });
+
     // Animations
     anim?.showDamageNumber(defender.position, result.damage, result.critical);
     if (result.critical) {

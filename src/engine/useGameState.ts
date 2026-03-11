@@ -355,8 +355,9 @@ function executeMove(state: GameState, unit: Unit, pos: Position, anim: Animatio
   const path = findPath(unit.position, pos, state.grid, unit.stats.movement);
   if (!path) return state;
 
-  // Trigger movement animation
+  // Trigger movement animation and sound
   anim?.animateUnitMove(unit.id, unit.position, pos, 350);
+  eventBus.emit('unit_moved', { unitId: unit.id, from: unit.position, to: pos });
 
   const newGrid = state.grid.map(row => row.map(t => ({ ...t })));
   newGrid[unit.position.y][unit.position.x].occupied = false;

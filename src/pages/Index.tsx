@@ -10,6 +10,7 @@ import TacticalMap from '../components/game/TacticalMap';
 import TacticalHUD from '../components/game/TacticalHUD';
 import TimelineBar from '../components/game/TimelineBar';
 import CombatLog from '../components/game/CombatLog';
+import { preloadTileSprites } from '../engine/tileSprites';
 
 const Index = () => {
   const {
@@ -49,6 +50,7 @@ const Index = () => {
 
   useEffect(() => {
     initGame();
+    preloadTileSprites();
   }, [initGame]);
 
   // Keyboard shortcuts

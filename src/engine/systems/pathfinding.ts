@@ -23,10 +23,13 @@ export function findPath(
   start: Position,
   end: Position,
   grid: TileData[][],
-  maxDistance?: number
+  maxDistance?: number,
+  allowOccupiedDest: boolean = false
 ): Position[] | null {
   const endTile = grid[end.y]?.[end.x];
   if (!endTile || endTile.blocksMovement) return null;
+  // Block pathing to occupied destination unless explicitly allowed
+  if (endTile.occupied && !allowOccupiedDest) return null;
 
   const open: PathNode[] = [];
   const closed = new Set<string>();
@@ -73,7 +76,7 @@ export function findPath(
 
       const tile = grid[nPos.y]?.[nPos.x];
       if (!tile || tile.blocksMovement) continue;
-      if (tile.occupied && !(nPos.x === end.x && nPos.y === end.y)) continue;
+      if (tile.occupied && !(allowOccupiedDest && nPos.x === end.x && nPos.y === end.y)) continue;
 
       const g = current.g + 1;
       if (maxDistance !== undefined && g > maxDistance) continue;

@@ -1,8 +1,8 @@
 // ============================================================
 // Shadow Protocol - Tactical HUD
 // ============================================================
-import React from 'react';
-import { GameState, Unit } from '../../engine/types';
+import React, { useState } from 'react';
+import { GameState, Unit, TileData } from '../../engine/types';
 import { WEAPONS } from '../../engine/data/weapons';
 import { ABILITIES } from '../../engine/data/abilities';
 import { Button } from '../ui/button';
@@ -31,8 +31,8 @@ const TacticalHUD: React.FC<TacticalHUDProps> = ({
           Squad
         </h3>
         <div className="grid grid-cols-2 gap-2">
-          {units.filter(u => u.faction === 'player').map(unit => (
-            <UnitPortrait key={unit.id} unit={unit} isActive={unit.id === activeUnitId} />
+          {units.filter(u => u.faction === 'player').map((unit, i) => (
+            <UnitPortrait key={unit.id} unit={unit} isActive={unit.id === activeUnitId} isRightColumn={i % 2 === 1} grid={gameState.grid} />
           ))}
         </div>
       </div>
@@ -90,15 +90,17 @@ const TacticalHUD: React.FC<TacticalHUDProps> = ({
             <div className="mt-2">
               <div className="text-xs text-muted-foreground mb-1">Abilities</div>
               <div className="grid grid-cols-1 gap-1">
-                {activeUnit.abilityIds.map(aId => {
+                {activeUnit.abilityIds.map((aId, idx) => {
                   const ability = ABILITIES[aId];
                   if (!ability) return null;
                   const cd = activeUnit.abilityCooldowns[aId] || 0;
+                  const shortcutKey = idx < 4 ? String(idx + 1) : null; // #8: 1-4 shortcuts
                   return (
                     <button
                       key={aId}
                       onClick={() => onSelectAction(selectedAction === `ability:${aId}` ? null : `ability:${aId}`)}
                       disabled={cd > 0 || activeUnit.actionPoints < ability.cost}
+                      title={ability.description} /* #3: Tooltip */
                       className={`flex items-center justify-between rounded border px-2 py-1 text-xs transition-all ${
                         selectedAction === `ability:${aId}`
                           ? 'border-[hsl(280,60%,55%)] bg-[hsl(280,60%,55%,0.2)] text-[hsl(280,60%,75%)]'
@@ -108,7 +110,10 @@ const TacticalHUD: React.FC<TacticalHUDProps> = ({
                       }`}
                     >
                       <span>{ability.name}</span>
-                      {cd > 0 && <span className="text-[10px] text-muted-foreground">CD: {cd}</span>}
+                      <span className="flex items-center gap-1">
+                        {cd > 0 && <span className="text-[10px] text-muted-foreground">CD: {cd}</span>}
+                        {shortcutKey && <kbd className="rounded bg-muted/30 px-1 text-[9px] text-muted-foreground">{shortcutKey}</kbd>}
+                      </span>
                     </button>
                   );
                 })}
@@ -195,16 +200,22 @@ const TacticalHUD: React.FC<TacticalHUDProps> = ({
 };
 
 // Sub-components
-const UnitPortrait: React.FC<{ unit: Unit; isActive: boolean }> = ({ unit, isActive }) => {
+const UnitPortrait: React.FC<{ unit: Unit; isActive: boolean; isRightColumn?: boolean; grid?: TileData[][] }> = ({ unit, isActive, isRightColumn, grid }) => {
+  const [hovered, setHovered] = useState(false);
   const healthPct = unit.stats.health / unit.stats.maxHealth;
+  const weapon = WEAPONS[unit.weaponId];
   return (
-    <div className={`flex items-center gap-2 rounded-md border p-2 transition-all ${
-      !unit.alive
-        ? 'border-border/10 bg-muted/10 opacity-40'
-        : isActive
-          ? 'border-[hsl(45,100%,60%)] bg-[hsl(45,100%,60%,0.1)]'
-          : 'border-border/20 bg-muted/20'
-    }`}>
+    <div
+      className={`relative flex items-center gap-2 rounded-md border p-2 transition-all ${
+        !unit.alive
+          ? 'border-border/10 bg-muted/10 opacity-40'
+          : isActive
+            ? 'border-[hsl(45,100%,60%)] bg-[hsl(45,100%,60%,0.1)]'
+            : 'border-border/20 bg-muted/20'
+      }`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white ${
         unit.alive ? '' : 'opacity-30'
       }`} style={{ background: unit.faction === 'player' ? 'hsl(210 60% 40%)' : 'hsl(0 50% 40%)' }}>
@@ -222,6 +233,29 @@ const UnitPortrait: React.FC<{ unit: Unit; isActive: boolean }> = ({ unit, isAct
           />
         </div>
       </div>
+      {/* #9: Hover detail popup */}
+      {hovered && unit.alive && (
+        <div className={`absolute ${isRightColumn ? 'right-0' : 'left-0'} top-full z-50 mt-1 w-48 rounded-lg border border-border/40 bg-card p-2 text-xs shadow-lg`}>
+          <div className="font-semibold text-foreground mb-1">{unit.name} — {unit.class}</div>
+          <div className="grid grid-cols-3 gap-1 mb-1">
+            <div>HP: <span className="text-[hsl(120,70%,50%)]">{unit.stats.health}/{unit.stats.maxHealth}</span></div>
+            <div>Armor: <span className="text-[hsl(210,60%,55%)]">{unit.stats.armor}</span></div>
+            <div>AP: <span className="text-[hsl(45,80%,55%)]">{unit.actionPoints}/{unit.maxActionPoints}</span></div>
+          </div>
+          {weapon && <div className="text-muted-foreground">Weapon: {weapon.name}</div>}
+          {unit.statusEffects.length > 0 && (
+            <div className="mt-1 text-[hsl(280,60%,55%)]">
+              {unit.statusEffects.map((e, i) => (
+                <span key={i}>{e.type} ({e.duration}t){i < unit.statusEffects.length - 1 ? ', ' : ''}</span>
+              ))}
+            </div>
+          )}
+          {unit.overwatching && <div className="mt-1 text-[hsl(45,100%,60%)]">Overwatching</div>}
+          {grid && grid[unit.position.y]?.[unit.position.x]?.smoke && grid[unit.position.y][unit.position.x].smoke! > 0 && (
+            <div className="mt-1 text-[hsl(0,0%,65%)]">In Smoke ({grid[unit.position.y][unit.position.x].smoke}t)</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

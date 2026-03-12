@@ -106,6 +106,8 @@ export function getDemoSpawns(): SpawnConfig {
       { x: 3, y: 11 },
       { x: 4, y: 10 },
       { x: 3, y: 9 },
+      { x: 1, y: 11 },
+      { x: 5, y: 11 },
     ],
     enemySpawns: [
       { x: 7, y: 0 },

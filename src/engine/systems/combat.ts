@@ -143,12 +143,14 @@ export function calculateHitChance(
   // Status effect modifiers
   const suppressionEffect = attacker.statusEffects.find(e => e.type === 'suppression');
   const accuracyBuff = attacker.statusEffects.find(e => e.type === 'buff_accuracy');
+  const debuffAccuracy = attacker.statusEffects.find(e => e.type === 'debuff_accuracy');
   const suppPenalty = suppressionEffect ? 20 : 0;
   const accuracyBonus = accuracyBuff ? 10 : 0;
+  const debuffAccuracyPenalty = debuffAccuracy ? 40 : 0;
 
   const total = Math.min(95, Math.max(5,
     baseAccuracy + weaponAccuracy + flankBonus + heightBonus + accuracyBonus
-    - coverPenalty - distancePenalty - suppPenalty
+    - coverPenalty - distancePenalty - suppPenalty - debuffAccuracyPenalty
   ));
 
   return { baseAccuracy, weaponAccuracy, flankBonus, heightBonus, coverPenalty, distancePenalty, total };

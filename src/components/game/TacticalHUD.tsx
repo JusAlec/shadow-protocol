@@ -52,6 +52,11 @@ const TacticalHUD: React.FC<TacticalHUDProps> = ({
             Ammo: {activeUnit.ammo}/{activeUnit.maxAmmo} •
             Weapon: {WEAPONS[activeUnit.weaponId]?.name || 'None'}
           </div>
+          {gameState.grid[activeUnit.position.y]?.[activeUnit.position.x]?.elevation > 0 && (
+            <div className="mb-2 flex items-center gap-1.5 rounded border border-[hsl(200,60%,40%)] bg-[hsl(200,60%,40%,0.15)] px-2 py-1 text-xs text-[hsl(200,60%,65%)]">
+              <span>^</span> Elevated — +10% accuracy
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-1.5">
@@ -251,6 +256,9 @@ const UnitPortrait: React.FC<{ unit: Unit; isActive: boolean; isRightColumn?: bo
             </div>
           )}
           {unit.overwatching && <div className="mt-1 text-[hsl(45,100%,60%)]">Overwatching</div>}
+          {grid && grid[unit.position.y]?.[unit.position.x]?.elevation > 0 && (
+            <div className="mt-1 text-[hsl(200,60%,60%)]">Elevated (+10% accuracy)</div>
+          )}
           {grid && grid[unit.position.y]?.[unit.position.x]?.smoke && grid[unit.position.y][unit.position.x].smoke! > 0 && (
             <div className="mt-1 text-[hsl(0,0%,65%)]">In Smoke ({grid[unit.position.y][unit.position.x].smoke}t)</div>
           )}

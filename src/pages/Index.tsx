@@ -11,6 +11,7 @@ import { useMovementAnimation } from '../hooks/useMovementAnimation';
 import { useCombatAnimations } from '../hooks/useCombatAnimations';
 import { useAudioEffects } from '../hooks/useAudioEffects';
 import { preloadSprites } from '../engine/sprites';
+import { preloadTileSprites } from '../engine/tileSprites';
 
 const ALL_TEMPLATES = ['specter', 'bulldog', 'circuit', 'phantom', 'reina', 'hydrabad', 'grunt', 'heavy_trooper', 'commander'];
 
@@ -38,6 +39,7 @@ const Index = () => {
   useEffect(() => {
     initGame();
     preloadSprites(ALL_TEMPLATES);
+    preloadTileSprites();
   }, [initGame]);
 
   // #12: AI stuck recovery — covers both pending-state stalls and no-progress stalls

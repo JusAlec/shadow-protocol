@@ -8,6 +8,7 @@ import { calculateHitChance, getDistance } from '../../engine/systems/combat';
 import { hasLineOfSight } from '../../engine/systems/visibility';
 import { WEAPONS } from '../../engine/data/weapons';
 import { getSpriteUrl, getTypingAnimationUrl, TYPING_FRAME_COUNT, getShootAnimationUrl, SHOOT_FRAME_COUNT, getRallyAnimationUrl, RALLY_FRAME_COUNT } from '../../engine/sprites';
+import { getTileSpriteUrl, hasTileSprite } from '../../engine/tileSprites';
 
 export interface AnimatedUnitState {
   x: number;
@@ -159,14 +160,76 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
                 className="cursor-pointer"
                 filter={vis === 'hidden' ? 'url(#fog-hidden)' : vis === 'detected' ? 'url(#fog-detected)' : undefined}
               >
-                {/* Base tile */}
+                {/* Base tile - floor sprite or color fallback */}
+                {hasTileSprite('floor') ? (
+                  <image
+                    href={getTileSpriteUrl('floor')}
+                    x={x * CELL + GAP}
+                    y={y * CELL + GAP}
+                    width={TILE_SIZE}
+                    height={TILE_SIZE}
+                    style={{ imageRendering: 'pixelated' }}
+                    opacity={vis === 'hidden' ? 0.3 : 1}
+                  />
+                ) : (
+                  <rect
+                    x={x * CELL + GAP}
+                    y={y * CELL + GAP}
+                    width={TILE_SIZE}
+                    height={TILE_SIZE}
+                    rx={3}
+                    fill={TILE_COLORS.floor}
+                    opacity={vis === 'hidden' ? 0.3 : 1}
+                  />
+                )}
+
+                {/* Non-floor tile sprite overlay (or color fallback) */}
+                {tile.type !== 'floor' && (
+                  hasTileSprite(tile.type) ? (
+                    <image
+                      href={getTileSpriteUrl(tile.type)}
+                      x={x * CELL + GAP}
+                      y={y * CELL + GAP}
+                      width={TILE_SIZE}
+                      height={TILE_SIZE}
+                      style={{ imageRendering: 'pixelated' }}
+                      opacity={vis === 'hidden' ? 0.3 : 1}
+                    />
+                  ) : (
+                    <>
+                      <rect
+                        x={x * CELL + GAP}
+                        y={y * CELL + GAP}
+                        width={TILE_SIZE}
+                        height={TILE_SIZE}
+                        rx={3}
+                        fill={TILE_COLORS[tile.type] || TILE_COLORS.floor}
+                        opacity={vis === 'hidden' ? 0.3 : 1}
+                      />
+                      {TILE_ICONS[tile.type] && vis !== 'hidden' && (
+                        <text
+                          x={x * CELL + GAP + TILE_SIZE / 2}
+                          y={y * CELL + GAP + TILE_SIZE - 6}
+                          textAnchor="middle"
+                          fontSize={10}
+                          fill="hsl(0 0% 60%)"
+                          pointerEvents="none"
+                        >
+                          {TILE_ICONS[tile.type]}
+                        </text>
+                      )}
+                    </>
+                  )
+                )}
+
+                {/* Selection/highlight border */}
                 <rect
                   x={x * CELL + GAP}
                   y={y * CELL + GAP}
                   width={TILE_SIZE}
                   height={TILE_SIZE}
                   rx={3}
-                  fill={TILE_COLORS[tile.type] || TILE_COLORS.floor}
+                  fill="none"
                   stroke={
                     isActive ? 'hsl(45 100% 60%)' :
                     isHovered ? 'hsl(210 60% 60%)' :
@@ -175,7 +238,6 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
                     'hsl(220 10% 15%)'
                   }
                   strokeWidth={isActive ? 2.5 : isHovered || inMoveRange || inAtkRange ? 1.5 : 0.5}
-                  opacity={vis === 'hidden' ? 0.3 : 1}
                 />
 
                 {/* Movement range overlay */}
@@ -202,20 +264,6 @@ const TacticalMap: React.FC<TacticalMapProps> = ({ gameState, onTileClick, onTil
                     fill="hsl(0 70% 50%)"
                     opacity={0.12}
                   />
-                )}
-
-                {/* Tile icon */}
-                {TILE_ICONS[tile.type] && vis !== 'hidden' && (
-                  <text
-                    x={x * CELL + GAP + TILE_SIZE / 2}
-                    y={y * CELL + GAP + TILE_SIZE - 6}
-                    textAnchor="middle"
-                    fontSize={10}
-                    fill="hsl(0 0% 60%)"
-                    pointerEvents="none"
-                  >
-                    {TILE_ICONS[tile.type]}
-                  </text>
                 )}
 
                 {/* Health bar for destructible tiles */}

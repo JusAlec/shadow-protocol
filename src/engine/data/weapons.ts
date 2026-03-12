@@ -61,6 +61,16 @@ export const WEAPONS: Record<string, Weapon> = {
     optimalRange: 3,
     ammoCapacity: 10,
   },
+  desert_eagle: {
+    id: 'desert_eagle',
+    name: 'Desert Eagle',
+    damage: 42,
+    accuracy: 10,
+    critBonus: 15,
+    range: 5,
+    optimalRange: 3,
+    ammoCapacity: 7,
+  },
   enemy_rifle: {
     id: 'enemy_rifle',
     name: 'Standard Rifle',
@@ -90,5 +100,15 @@ export const WEAPONS: Record<string, Weapon> = {
     range: 5,
     optimalRange: 4,
     ammoCapacity: 8,
+  },
+  macbook_air: {
+    id: 'macbook_air',
+    name: 'Macbook Air',
+    damage: 0,
+    accuracy: 0,
+    critBonus: 0,
+    range: 0,
+    optimalRange: 0,
+    ammoCapacity: 0,
   },
 };

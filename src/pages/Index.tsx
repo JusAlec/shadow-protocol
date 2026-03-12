@@ -1,79 +1,230 @@
 // ============================================================
 // Shadow Protocol - Main Game Page
 // ============================================================
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { useGameState } from '../engine/useGameState';
-import { useAnimations } from '../engine/useAnimations';
-import { eventBus } from '../engine/events';
-import { playShoot, playExplosion, playMove, playCriticalHit, playMiss, playHeal, playUnitKilled, playAbility } from '../engine/audio';
 import TacticalMap from '../components/game/TacticalMap';
 import TacticalHUD from '../components/game/TacticalHUD';
 import TimelineBar from '../components/game/TimelineBar';
 import CombatLog from '../components/game/CombatLog';
+import { useMovementAnimation } from '../hooks/useMovementAnimation';
+import { useCombatAnimations } from '../hooks/useCombatAnimations';
+import { useAudioEffects } from '../hooks/useAudioEffects';
+import { preloadSprites } from '../engine/sprites';
 import { preloadTileSprites } from '../engine/tileSprites';
+
+const ALL_TEMPLATES = ['specter', 'bulldog', 'circuit', 'phantom', 'reina', 'hydrabad', 'grunt', 'heavy_trooper', 'commander'];
 
 const Index = () => {
   const {
     gameState, initGame, selectAction, handleTileClick,
     executeReload, executeOverwatch, endTurn, useCombo, setHoveredTile,
-    registerAnimations,
+    clearPendingPath, clearPendingCombatAnimation,
   } = useGameState();
 
-  const { animState, showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake } = useAnimations();
+  const { animatingUnits, startAnimation } = useMovementAnimation();
+  const { activeAnimation: activeCombatAnimation, startCombatAnimation } = useCombatAnimations();
+  const { playGunshot, playExplosion, playLevelUp, playFlashbang, playFootstep, playLastStep, playConstruction, playDrone, playStimulant, playHydrabad, playGoldenEagleShot, playCartelRally } = useAudioEffects();
+  const lastPendingPathRef = useRef<string | null>(null);
+  const lastPendingCombatAnimRef = useRef<string | null>(null);
+  const lastCombatLogLen = useRef(0);
+  const goldenEagleShotsFired = useRef(0);
 
-  // Register animation callbacks with game state
-  useEffect(() => {
-    registerAnimations({ showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake });
-  }, [registerAnimations, showDamageNumber, showExplosion, animateUnitMove, triggerScreenShake]);
+  // AI stuck recovery: track when pending state was first observed during enemy_turn
+  const stuckTimestampRef = useRef<number | null>(null);
 
-  // Sound effects via event bus
-  useEffect(() => {
-    const unsubs = [
-      eventBus.on('unit_moved', () => playMove()),
-      eventBus.on('unit_attacked', (e) => {
-        if (e.payload.critical) playCriticalHit();
-        else if (e.payload.miss) playMiss();
-        else playShoot();
-      }),
-      eventBus.on('unit_damaged', (e) => {
-        if (e.payload.critical) playCriticalHit();
-      }),
-      eventBus.on('unit_killed', () => playUnitKilled()),
-      eventBus.on('unit_healed', () => playHeal()),
-      eventBus.on('ability_used', () => playAbility()),
-      eventBus.on('cover_destroyed', () => playExplosion()),
-      eventBus.on('tile_destroyed', () => playExplosion()),
-      eventBus.on('hazard_triggered', () => playExplosion()),
-    ];
-    return () => unsubs.forEach(u => u());
-  }, []);
+  // Derive input blocking from pendingPath or pendingCombatAnimation
+  const inputBlocked = !!gameState?.pendingPath || !!gameState?.pendingCombatAnimation;
 
   useEffect(() => {
     initGame();
+    preloadSprites(ALL_TEMPLATES);
     preloadTileSprites();
   }, [initGame]);
 
-  // Keyboard shortcuts
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!gameState || gameState.phase !== 'player_turn') return;
-    switch (e.key.toLowerCase()) {
-      case 'm': selectAction('move'); break;
-      case 's': selectAction('shoot'); break;
-      case 'r': executeReload(); break;
-      case 'o': executeOverwatch(); break;
-      case ' ':
-      case 'escape':
-        e.preventDefault();
-        if (gameState.selectedAction) selectAction(null);
-        else endTurn();
-        break;
-    }
-  }, [gameState, selectAction, executeReload, executeOverwatch, endTurn]);
-
+  // #12: AI stuck recovery — covers both pending-state stalls and no-progress stalls
+  const lastEnemyActionRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!gameState || gameState.phase !== 'enemy_turn') {
+      stuckTimestampRef.current = null;
+      lastEnemyActionRef.current = null;
+      return;
+    }
+
+    // Track state fingerprint to detect no progress
+    const fingerprint = `${gameState.activeUnitId}:${gameState.pendingPath ? 'p' : ''}:${gameState.pendingCombatAnimation ? 'a' : ''}`;
+    if (fingerprint !== lastEnemyActionRef.current) {
+      lastEnemyActionRef.current = fingerprint;
+      stuckTimestampRef.current = Date.now();
+    }
+
+    const timer = setTimeout(() => {
+      if (stuckTimestampRef.current !== null && Date.now() - stuckTimestampRef.current >= 3000) {
+        clearPendingPath();
+        clearPendingCombatAnimation();
+        // Force end turn if still stuck with no pending state
+        if (!gameState.pendingPath && !gameState.pendingCombatAnimation) {
+          endTurn();
+        }
+        stuckTimestampRef.current = null;
+      }
+    }, 3100);
+
+    return () => clearTimeout(timer);
+  }, [gameState?.phase, gameState?.activeUnitId, gameState?.pendingPath, gameState?.pendingCombatAnimation, clearPendingPath, clearPendingCombatAnimation, endTurn]);
+
+  // Handle pendingPath -> start animation (useLayoutEffect to run before paint)
+  useLayoutEffect(() => {
+    if (!gameState?.pendingPath) {
+      lastPendingPathRef.current = null;
+      return;
+    }
+
+    const { unitId, path } = gameState.pendingPath;
+    // Deduplicate: don't re-trigger for the same path
+    const pathKey = `${unitId}:${path.map(p => `${p.x},${p.y}`).join('|')}`;
+    if (pathKey === lastPendingPathRef.current) return;
+    lastPendingPathRef.current = pathKey;
+
+    startAnimation(unitId, path, () => {
+      clearPendingPath();
+    }, playFootstep, playLastStep);
+  }, [gameState?.pendingPath, startAnimation, clearPendingPath]);
+
+  // Handle pendingCombatAnimation -> start combat animation
+  useLayoutEffect(() => {
+    if (!gameState?.pendingCombatAnimation) {
+      lastPendingCombatAnimRef.current = null;
+      return;
+    }
+
+    const anim = gameState.pendingCombatAnimation;
+    const animKey = `${anim.from.x},${anim.from.y}->${anim.to.x},${anim.to.y}:${anim.hit}:${anim.damage}`;
+    if (animKey === lastPendingCombatAnimRef.current) return;
+    lastPendingCombatAnimRef.current = animKey;
+
+    startCombatAnimation(anim, () => {
+      clearPendingCombatAnimation();
+    });
+  }, [gameState?.pendingCombatAnimation, startCombatAnimation, clearPendingCombatAnimation]);
+
+  // Play sound on new combat animations
+  useEffect(() => {
+    if (!gameState?.pendingCombatAnimation) return;
+    const animType = gameState.pendingCombatAnimation.type;
+    if (animType === 'ability') {
+      playExplosion();
+    } else if (animType === 'projectile') {
+      playGunshot();
+    } else if (animType === 'buff') {
+      playLevelUp();
+    } else if (animType === 'flashbang') {
+      playFlashbang();
+    } else if (animType === 'construction') {
+      playConstruction();
+    } else if (animType === 'drone') {
+      playDrone();
+    } else if (animType === 'stimulant') {
+      playStimulant();
+    } else if (animType === 'typing') {
+      playHydrabad();
+    } else if (animType === 'golden_eagle') {
+      // Sounds are fired progress-based in a separate effect below
+    } else if (animType === 'reina_rally') {
+      playCartelRally();
+    }
+  }, [gameState?.pendingCombatAnimation, playGunshot, playExplosion, playLevelUp, playFlashbang, playConstruction, playDrone, playStimulant, playHydrabad, playGoldenEagleShot, playCartelRally]);
+
+  // Golden Eagle: fire shot sounds in sync with animation progress
+  useEffect(() => {
+    if (!activeCombatAnimation || activeCombatAnimation.type !== 'golden_eagle') {
+      goldenEagleShotsFired.current = 0;
+      return;
+    }
+    const shotCount = activeCombatAnimation.shotCount || 1;
+    const { progress } = activeCombatAnimation;
+    // Shots fire during active phase (10-85%)
+    const activeProgress = Math.max(0, Math.min(1, (progress - 0.10) / 0.75));
+    const currentShotIndex = Math.min(Math.floor(activeProgress * shotCount), shotCount - 1);
+    // Fire sound for each new shot threshold crossed
+    while (goldenEagleShotsFired.current <= currentShotIndex && activeProgress > 0) {
+      playGoldenEagleShot();
+      goldenEagleShotsFired.current++;
+    }
+  }, [activeCombatAnimation, playGoldenEagleShot]);
+
+  // Play gunshot sound on new damage log entries (fallback for shots without animation)
+  useEffect(() => {
+    if (!gameState) return;
+    const log = gameState.combatLog;
+    const prevLen = lastCombatLogLen.current;
+    lastCombatLogLen.current = log.length;
+
+    // Only use log-based sound if there's no pending combat animation (to avoid double-play)
+    if (log.length > prevLen && !gameState.pendingCombatAnimation) {
+      const newEntries = log.slice(prevLen);
+      if (newEntries.some(e => e.type === 'damage')) {
+        playGunshot();
+      }
+    }
+  }, [gameState?.combatLog.length, playGunshot, gameState?.pendingCombatAnimation]);
+
+  // Guarded tile click - ignore during animation
+  const guardedTileClick = useCallback((pos: { x: number; y: number }) => {
+    if (inputBlocked) return;
+    handleTileClick(pos);
+  }, [handleTileClick, inputBlocked]);
+
+  // Guarded action selection
+  const guardedSelectAction = useCallback((action: string | null) => {
+    if (inputBlocked) return;
+    selectAction(action);
+  }, [selectAction, inputBlocked]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!gameState || gameState.phase !== 'player_turn' || !!gameState.pendingPath) return;
+      const activeUnit = gameState.units.find(u => u.id === gameState.activeUnitId);
+      switch (e.key.toLowerCase()) {
+        case 'm': selectAction('move'); break;
+        case 's': selectAction('shoot'); break;
+        case 'r': executeReload(); break;
+        case 'o': executeOverwatch(); break;
+        // #8: Keyboard shortcuts 1 & 2 for abilities
+        case '1':
+          if (activeUnit && activeUnit.abilityIds[0]) {
+            selectAction(`ability:${activeUnit.abilityIds[0]}`);
+          }
+          break;
+        case '2':
+          if (activeUnit && activeUnit.abilityIds[1]) {
+            selectAction(`ability:${activeUnit.abilityIds[1]}`);
+          }
+          break;
+        case '3':
+          if (activeUnit && activeUnit.abilityIds[2]) {
+            selectAction(`ability:${activeUnit.abilityIds[2]}`);
+          }
+          break;
+        case '4':
+          if (activeUnit && activeUnit.abilityIds[3]) {
+            selectAction(`ability:${activeUnit.abilityIds[3]}`);
+          }
+          break;
+        case ' ':
+        case 'escape':
+          e.preventDefault();
+          // #13: Cancel pending combo on Escape
+          if (gameState.selectedAction || gameState.pendingCombo) selectAction(null);
+          else endTurn();
+          break;
+      }
+    }
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, [gameState, selectAction, executeReload, executeOverwatch, endTurn]);
 
   if (!gameState) {
     return (
@@ -165,7 +316,7 @@ const Index = () => {
         <aside className="w-64 flex-shrink-0 overflow-y-auto border-r border-border/20 bg-card/30 p-3 space-y-3">
           <TacticalHUD
             gameState={gameState}
-            onSelectAction={selectAction}
+            onSelectAction={guardedSelectAction}
             onReload={executeReload}
             onOverwatch={executeOverwatch}
             onEndTurn={endTurn}
@@ -178,9 +329,11 @@ const Index = () => {
           <div className="flex-1 flex items-center justify-center overflow-auto p-4">
             <TacticalMap
               gameState={gameState}
-              onTileClick={handleTileClick}
+              onTileClick={guardedTileClick}
               onTileHover={setHoveredTile}
-              animState={animState}
+              animatingUnits={animatingUnits}
+              pendingPath={gameState.pendingPath}
+              activeCombatAnimation={activeCombatAnimation}
             />
           </div>
           {/* Timeline */}
@@ -202,6 +355,14 @@ const Index = () => {
               {(() => {
                 const tile = gameState.grid[gameState.hoveredTile.y]?.[gameState.hoveredTile.x];
                 if (!tile) return null;
+                const occupant = tile.occupantId
+                  ? gameState.units.find(u => u.id === tile.occupantId && u.alive)
+                  : gameState.units.find(u => u.alive && u.position.x === gameState.hoveredTile!.x && u.position.y === gameState.hoveredTile!.y);
+                const tileKey = `${gameState.hoveredTile!.x},${gameState.hoveredTile!.y}`;
+                const isVisible = gameState.squadVisibility[tileKey] === 'visible';
+                const showOccupant = occupant && (occupant.faction === 'player' || isVisible);
+                const turret = gameState.turrets.find(t => t.position.x === gameState.hoveredTile!.x && t.position.y === gameState.hoveredTile!.y);
+
                 return (
                   <div className="text-xs space-y-0.5">
                     <div>Type: <span className="text-foreground">{tile.type.replace(/_/g, ' ')}</span></div>
@@ -209,6 +370,31 @@ const Index = () => {
                     {tile.elevation > 0 && <div>Elevation: <span className="text-foreground">+{tile.elevation}</span></div>}
                     {tile.destructible && <div>HP: <span className="text-foreground">{tile.health}/{tile.maxHealth}</span></div>}
                     {tile.hazardEffect && <div>Hazard: <span className="text-[hsl(0,70%,55%)]">{tile.hazardEffect}</span></div>}
+                    {showOccupant && (
+                      <div className="mt-1 pt-1 border-t border-border/20">
+                        <div className="font-semibold">
+                          <span className={occupant.faction === 'player' ? 'text-[hsl(210,80%,65%)]' : 'text-[hsl(0,70%,60%)]'}>
+                            {occupant.name}
+                          </span>
+                          <span className="text-muted-foreground ml-1">({occupant.class})</span>
+                        </div>
+                        <div>HP: <span className="text-foreground">{occupant.stats.health}/{occupant.stats.maxHealth}</span></div>
+                        <div>Armor: <span className="text-foreground">{occupant.stats.armor}/{occupant.stats.maxArmor}</span></div>
+                        <div>AP: <span className="text-foreground">{occupant.actionPoints}</span></div>
+                        {occupant.statusEffects.length > 0 && (
+                          <div>Status: <span className="text-[hsl(280,60%,55%)]">{occupant.statusEffects.map(e => e.type).join(', ')}</span></div>
+                        )}
+                      </div>
+                    )}
+                    {turret && (
+                      <div className="mt-1 pt-1 border-t border-border/20">
+                        <div className="font-semibold text-[hsl(50,80%,55%)]">Turret</div>
+                        <div>HP: <span className="text-foreground">{turret.health}/{turret.maxHealth}</span></div>
+                        <div>Damage: <span className="text-foreground">{turret.damage}</span></div>
+                        <div>Range: <span className="text-foreground">{turret.range}</span></div>
+                        <div>Turns: <span className="text-foreground">{turret.turnsRemaining}</span></div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}

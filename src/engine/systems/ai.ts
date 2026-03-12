@@ -1,7 +1,7 @@
 // ============================================================
 // Shadow Protocol - Enemy AI System
 // ============================================================
-import { Unit, Position, TileData, AIState, AwarenessState } from '@/engine/types';
+import { Unit, Position, TileData, AIState, AwarenessState, DeployedTurret, DeployedDrone } from '@/engine/types';
 import { eventBus } from '@/engine/events';
 import { getDistance, getCoverBetween, isFlanking, resolveAttack, applyDamage } from '@/engine/systems/combat';
 import { hasLineOfSight } from '@/engine/systems/visibility';
@@ -97,11 +97,13 @@ export function decideAction(
   aiState: AIState,
   playerUnits: Unit[],
   allEnemies: Unit[],
-  grid: TileData[][]
+  grid: TileData[][],
+  turrets: DeployedTurret[] = [],
+  drones: DeployedDrone[] = []
 ): AIAction {
   switch (aiState.awareness) {
     case 'engaged':
-      return decideCombatAction(enemy, aiState, playerUnits, allEnemies, grid);
+      return decideCombatAction(enemy, aiState, playerUnits, allEnemies, grid, turrets, drones);
     case 'alerted':
     case 'suspicious':
       return decideInvestigateAction(enemy, aiState, grid);
@@ -116,10 +118,31 @@ function decideCombatAction(
   aiState: AIState,
   playerUnits: Unit[],
   allEnemies: Unit[],
-  grid: TileData[][]
+  grid: TileData[][],
+  turrets: DeployedTurret[] = [],
+  drones: DeployedDrone[] = []
 ): AIAction {
   const aliveTargets = playerUnits.filter(p => p.alive);
   if (aliveTargets.length === 0) return { type: 'idle' };
+
+  // #10: Priority target — attack nearby turrets and drones first
+  const weapon = WEAPONS[enemy.weaponId];
+  if (weapon) {
+    // Check turrets
+    for (const turret of turrets) {
+      const turretDist = getDistance(enemy.position, turret.position);
+      if (turretDist <= weapon.range && turretDist <= 4 && hasLineOfSight(enemy.position, turret.position, grid)) {
+        return { type: 'attack', targetPosition: turret.position, targetUnitId: `turret:${turret.id}` };
+      }
+    }
+    // #7: Check drones
+    for (const drone of drones) {
+      const droneDist = getDistance(enemy.position, drone.position);
+      if (droneDist <= weapon.range && droneDist <= 4 && hasLineOfSight(enemy.position, drone.position, grid)) {
+        return { type: 'attack', targetPosition: drone.position, targetUnitId: `drone:${drone.id}` };
+      }
+    }
+  }
 
   // Select target: lowest health → closest → last attacker
   const target = selectTarget(enemy, aliveTargets);
@@ -128,7 +151,7 @@ function decideCombatAction(
   if (enemy.stats.health < enemy.stats.maxHealth * 0.25) {
     const safeCover = findBestCover(enemy, aliveTargets, grid, true);
     if (safeCover) {
-      const path = findPath(enemy.position, safeCover, grid, enemy.stats.movement);
+      const path = findPath(enemy.position, safeCover, grid, enemy.actionPoints);
       if (path) return { type: 'move', targetPosition: safeCover, path };
     }
   }
@@ -138,7 +161,6 @@ function decideCombatAction(
   if (abilityAction) return abilityAction;
 
   // Can attack?
-  const weapon = WEAPONS[enemy.weaponId];
   const distToTarget = getDistance(enemy.position, target.position);
   if (weapon && distToTarget <= weapon.range && hasLineOfSight(enemy.position, target.position, grid)) {
     return { type: 'attack', targetUnitId: target.id };
@@ -147,22 +169,22 @@ function decideCombatAction(
   // Try to flank
   const flankPos = findFlankPosition(enemy, target, grid);
   if (flankPos) {
-    const path = findPath(enemy.position, flankPos, grid, enemy.stats.movement);
+    const path = findPath(enemy.position, flankPos, grid, enemy.actionPoints);
     if (path) return { type: 'move', targetPosition: flankPos, path };
   }
 
   // Move to best cover near target
   const coverPos = findBestCover(enemy, aliveTargets, grid, false);
   if (coverPos) {
-    const path = findPath(enemy.position, coverPos, grid, enemy.stats.movement);
+    const path = findPath(enemy.position, coverPos, grid, enemy.actionPoints);
     if (path) return { type: 'move', targetPosition: coverPos, path };
   }
 
-  // Move toward target
-  const path = findPath(enemy.position, target.position, grid, enemy.stats.movement);
+  // Move toward target (allow occupied dest since we truncate the path)
+  const path = findPath(enemy.position, target.position, grid, enemy.actionPoints, true);
   if (path && path.length > 1) {
-    const moveTarget = path[Math.min(path.length - 1, enemy.stats.movement)];
-    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.stats.movement + 1) };
+    const moveTarget = path[Math.min(path.length - 1, enemy.actionPoints)];
+    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.actionPoints + 1) };
   }
 
   return { type: 'idle' };
@@ -180,10 +202,10 @@ function decideInvestigateAction(
     return { type: 'idle' }; // Reached investigation point
   }
 
-  const path = findPath(enemy.position, target, grid, enemy.stats.movement);
+  const path = findPath(enemy.position, target, grid, enemy.actionPoints, true);
   if (path && path.length > 1) {
-    const moveTarget = path[Math.min(path.length - 1, enemy.stats.movement)];
-    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.stats.movement + 1) };
+    const moveTarget = path[Math.min(path.length - 1, enemy.actionPoints)];
+    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.actionPoints + 1) };
   }
 
   return { type: 'idle' };
@@ -201,10 +223,10 @@ function decidePatrolAction(
     return { type: 'idle' }; // Will advance patrol index on turn end
   }
 
-  const path = findPath(enemy.position, target, grid, enemy.stats.movement);
+  const path = findPath(enemy.position, target, grid, enemy.actionPoints, true);
   if (path && path.length > 1) {
-    const moveTarget = path[Math.min(path.length - 1, enemy.stats.movement)];
-    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.stats.movement + 1) };
+    const moveTarget = path[Math.min(path.length - 1, enemy.actionPoints)];
+    return { type: 'move', targetPosition: moveTarget, path: path.slice(0, enemy.actionPoints + 1) };
   }
 
   return { type: 'idle' };
@@ -228,7 +250,9 @@ function findBestCover(
   grid: TileData[][],
   retreating: boolean
 ): Position | null {
-  const reachable = getReachableTiles(enemy.position, enemy.stats.movement, grid);
+  const hasDebuffSpeed = enemy.statusEffects.some(e => e.type === 'debuff_speed');
+  const effectiveAP = hasDebuffSpeed ? Math.floor(enemy.actionPoints * 0.6) : enemy.actionPoints;
+  const reachable = getReachableTiles(enemy.position, effectiveAP, grid);
   if (reachable.length === 0) return null;
 
   let bestPos: Position | null = null;
@@ -275,7 +299,9 @@ function findFlankPosition(
   target: Unit,
   grid: TileData[][]
 ): Position | null {
-  const reachable = getReachableTiles(enemy.position, enemy.stats.movement, grid);
+  const hasDebuffSpeed = enemy.statusEffects.some(e => e.type === 'debuff_speed');
+  const effectiveAP = hasDebuffSpeed ? Math.floor(enemy.actionPoints * 0.6) : enemy.actionPoints;
+  const reachable = getReachableTiles(enemy.position, effectiveAP, grid);
 
   for (const pos of reachable) {
     if (isFlanking(pos, target.position, grid) && hasLineOfSight(pos, target.position, grid)) {

@@ -42,6 +42,7 @@ export interface TileData {
   hazardDamage?: number;
   occupied: boolean;
   occupantId?: string;
+  smoke?: number; // turns remaining for smoke cloud, undefined = no smoke
 }
 
 export type DestructionEvent =
@@ -59,7 +60,7 @@ export interface VisibilityMap {
 }
 
 // --- Status Effects ---
-export type StatusEffectType = 'stun' | 'poison' | 'suppression' | 'burn' | 'shock' | 'buff_speed' | 'buff_accuracy';
+export type StatusEffectType = 'stun' | 'poison' | 'suppression' | 'burn' | 'shock' | 'buff_speed' | 'buff_accuracy' | 'intimidate' | 'rally_ap' | 'debuff_speed' | 'debuff_accuracy';
 
 export interface StatusEffect {
   type: StatusEffectType;
@@ -67,6 +68,9 @@ export interface StatusEffect {
   damagePerTurn?: number;
   source?: string;
 }
+
+// --- Facing & Direction ---
+export type FacingDirection = 'south' | 'south-west' | 'west' | 'north-west' | 'north' | 'north-east' | 'east' | 'south-east';
 
 // --- Operatives & Units ---
 export type OperativeClass = 'sniper' | 'assault' | 'engineer' | 'infiltrator' | 'heavy' | 'medic';
@@ -86,6 +90,7 @@ export interface UnitStats {
 
 export interface Unit {
   id: string;
+  templateId: string;
   name: string;
   class: OperativeClass;
   faction: Faction;
@@ -102,6 +107,7 @@ export interface Unit {
   ammo: number;
   maxAmmo: number;
   overwatching: boolean;
+  facing: FacingDirection;
   lastKnownPositions: Record<string, Position>; // enemy id → last seen pos
 }
 
@@ -186,6 +192,51 @@ export const ACTION_COSTS: Record<string, number> = {
   end_turn: 20,
 };
 
+// --- Combat Animation ---
+export interface CombatAnimation {
+  type: 'projectile' | 'ability' | 'buff' | 'flashbang' | 'construction' | 'drone' | 'stimulant' | 'typing' | 'golden_eagle' | 'reina_rally';
+  from: Position;
+  to: Position;
+  hit: boolean;
+  damage: number;
+  critical: boolean;
+  duration: number; // ms
+  radius?: number; // blast radius for AoE abilities
+  shotCount?: number; // number of individual shots (Golden Eagle)
+  perShotDamages?: number[]; // damage per shot (Golden Eagle)
+  casterFacing?: FacingDirection; // facing direction of the caster (for directional animations)
+}
+
+// --- Smoke Cloud ---
+export interface SmokeCloud {
+  center: Position;
+  radius: number;
+  turnsRemaining: number;
+}
+
+// --- Deployed Drone ---
+export interface DeployedDrone {
+  id: string;
+  position: Position;
+  ownerId: string;
+  radius: number;
+  health: number;
+  maxHealth: number;
+  turnsRemaining: number;
+}
+
+// --- Deployed Turret ---
+export interface DeployedTurret {
+  id: string;
+  position: Position;
+  ownerId: string;
+  damage: number;
+  range: number;
+  health: number;
+  maxHealth: number;
+  turnsRemaining: number;
+}
+
 // --- Game State ---
 export type GamePhase = 'deployment' | 'player_turn' | 'enemy_turn' | 'resolution' | 'victory' | 'defeat';
 
@@ -205,6 +256,12 @@ export interface GameState {
   movementRange: Position[];
   attackRange: Position[];
   combatLog: CombatLogEntry[];
+  pendingPath: { unitId: string; path: Position[] } | null;
+  pendingCombatAnimation: CombatAnimation | null;
+  turrets: DeployedTurret[];
+  drones: DeployedDrone[];
+  smokeClouds: SmokeCloud[];
+  pendingCombo: string | null;
   mapWidth: number;
   mapHeight: number;
 }

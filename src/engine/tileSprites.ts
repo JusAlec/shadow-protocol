@@ -5,7 +5,6 @@ import { TileType } from '@/engine/types';
 
 const BASE = import.meta.env.BASE_URL;
 
-// Maps TileType to asset path relative to public/assets/tiles/
 const TILE_SPRITE_MAP: Record<TileType, string> = {
   floor: 'terrain/floor.png',
   elevated: 'terrain/elevated.png',
@@ -22,7 +21,6 @@ const TILE_SPRITE_MAP: Record<TileType, string> = {
   gas_canister: 'objects/gas_canister.png',
 };
 
-// Track which sprites loaded successfully
 const loadedSprites = new Set<TileType>();
 
 export function getTileSpriteUrl(tileType: TileType): string {
